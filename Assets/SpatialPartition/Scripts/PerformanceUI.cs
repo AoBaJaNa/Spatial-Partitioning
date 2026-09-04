@@ -210,7 +210,7 @@ public sealed class PerformanceUI : MonoBehaviour
 
         textBuilder.AppendLine(
             $"<color=#AAB4C3>Mode</color>          " +
-            $"<b><color=#FFFFFF>{MainUnit.SearchModeName}</color></b>"
+            $"<b><color=#FFFFFF>{mainUnit.searchType.ToString()}</color></b>"
         );
 
         textBuilder.AppendLine(

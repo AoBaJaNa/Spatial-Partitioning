@@ -15,11 +15,29 @@ public sealed class SpatialTestManager : MonoBehaviour
 
     private readonly List<GameObject> spawnedUnits = new();
 
+    [Header("Cell Grid Setting")]
+    public IReadOnlyDictionary<Vector2Int, List<GameObject>> UnitGridDic => unitGridDic;
+    private readonly Dictionary<Vector2Int, List<GameObject>> unitGridDic = new();
+    public float cellSize = 10f;
     private void Awake()
     {
         RebuildSpawnedUnitList();
     }
+    private void Start()
+    {
+        foreach (GameObject obj in spawnedUnits)
+        {
+            Vector2Int value = new Vector2Int(Mathf.FloorToInt(obj.transform.position.x / cellSize), Mathf.FloorToInt(obj.transform.position.z / cellSize));
 
+            if (!unitGridDic.TryGetValue(value, out var list))
+            {
+                list = new List<GameObject>();
+                unitGridDic[value] = list;
+            }
+
+            list.Add(obj);
+        }
+    }
     public void SpawnUnits()
     {
         if (unitPrefab == null)
