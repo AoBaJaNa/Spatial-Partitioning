@@ -21,3 +21,7 @@ Open `Assets/SpatialPartition/Scenes/SpatialPartitionSandbox.unity`.
 - `Assets/SpatialPartition/Materials`: required materials
 
 Large RTS benchmark scenes and unrelated RTS project files are intentionally excluded.
+
+## Scope
+
+Selection and RTS movement systems are intentionally excluded. Static spatial queries are the initial baseline; a dedicated lightweight mover can be added later for dynamic-index update tests.

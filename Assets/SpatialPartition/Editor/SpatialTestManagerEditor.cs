@@ -2,26 +2,18 @@ using UnityEditor;
 using UnityEngine;
 
 [CustomEditor(typeof(SpatialTestManager))]
-public class SpatialTestManagerEditor : Editor
+public sealed class SpatialTestManagerEditor : Editor
 {
     public override void OnInspectorGUI()
     {
         base.OnInspectorGUI();
+        var manager = (SpatialTestManager)target;
 
-        SpatialTestManager manager = (SpatialTestManager)target;
+        GUILayout.Space(12f);
+        if (GUILayout.Button("Spawn Units", GUILayout.Height(30f)))
+            manager.SpawnUnits();
 
-        GUILayout.Space(15);
-
-        if(GUILayout.Button("À¯´Ö ½ºÆù(Spawn)", GUILayout.Height(30)))
-        {
-            manager.SpawnUnit();
-        }
-
-        GUILayout.Space(5);
-        
-        if(GUILayout.Button("À¯´Ö »èÁ¦(Clear)", GUILayout.Height(30)))
-        {
+        if (GUILayout.Button("Clear Units", GUILayout.Height(30f)))
             manager.ClearUnits();
-        }
     }
 }
