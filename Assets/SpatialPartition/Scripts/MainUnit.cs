@@ -72,7 +72,8 @@ public class MainUnit : MonoBehaviour
     {
         transform.localScale = targetScale;
 
-        if (!TryGetComponent<MeshRenderer>(out var renderer))
+        if (materialProperties == null ||
+            !TryGetComponent<MeshRenderer>(out var renderer))
             return;
 
         renderer.GetPropertyBlock(materialProperties);

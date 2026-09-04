@@ -25,18 +25,43 @@ public sealed class SpatialTestManager : MonoBehaviour
     }
     private void Start()
     {
+        BuildGrid();
+    }
+    private void OnValidate()
+    {
+        BuildGrid();
+    }
+    public void BuildGrid()
+    {
+        unitGridDic.Clear();
+
         foreach (GameObject obj in spawnedUnits)
         {
-            Vector2Int value = new Vector2Int(Mathf.FloorToInt(obj.transform.position.x / cellSize), Mathf.FloorToInt(obj.transform.position.z / cellSize));
+            if (obj == null)
+                continue;
 
-            if (!unitGridDic.TryGetValue(value, out var list))
+            Vector2Int cell = GetCell(obj.transform.position);
+
+            if (!unitGridDic.TryGetValue(cell, out var list))
             {
                 list = new List<GameObject>();
-                unitGridDic[value] = list;
+                unitGridDic.Add(cell, list);
             }
 
             list.Add(obj);
         }
+
+        Debug.Log(
+            $"Grid rebuilt | Cell Size: {cellSize} | Cells: {unitGridDic.Count}"
+        );
+    }
+
+    private Vector2Int GetCell(Vector3 position)
+    {
+        return new Vector2Int(
+            Mathf.FloorToInt(position.x / cellSize),
+            Mathf.FloorToInt(position.z / cellSize)
+        );
     }
     public void SpawnUnits()
     {
