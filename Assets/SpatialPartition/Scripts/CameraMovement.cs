@@ -31,7 +31,7 @@ public class CameraMovement : MonoBehaviour
     private void Update()
     {
 
-        if (Keyboard.current != null && Keyboard.current.spaceKey.wasPressedThisFrame)
+        if (Keyboard.current != null && Keyboard.current.ctrlKey.wasPressedThisFrame)
         {
             controlToggle = !controlToggle;
         }
