@@ -223,6 +223,15 @@ public sealed class PerformanceUI : MonoBehaviour
             $"<b>{mainUnit.searchRadius:F1} m</b>"
         );
 
+        if (mainUnit.searchType == SpatialSearchType.UniformGrid &&
+            testManager != null)
+        {
+            textBuilder.AppendLine(
+                $"<color=#AAB4C3>Cell Size</color>     " +
+                $"<b>{testManager.cellSize:F1} m</b>"
+            );
+        }
+
         textBuilder.AppendLine();
 
         textBuilder.AppendLine(
@@ -295,9 +304,20 @@ public sealed class PerformanceUI : MonoBehaviour
 
         textBuilder.AppendLine(
             $"<size=25>" +
-            $"<color=#AAB4C3>QUERY</color>   " +
+            $"<color=#AAB4C3>AVG QUERY</color>   " +
             $"<color={queryColor}><b>{mainUnit.LastSearchMilliseconds:F4} ms</b></color>" +
             $"</size>"
+        );
+
+        textBuilder.AppendLine(
+            $"<color=#AAB4C3>Min / Max</color>     " +
+            $"{mainUnit.MinSearchMilliseconds:F4} / " +
+            $"{mainUnit.MaxSearchMilliseconds:F4} ms"
+        );
+
+        textBuilder.AppendLine(
+            $"<color=#AAB4C3>Samples</color>       " +
+            $"<b>{mainUnit.LastSampleCount}</b>"
         );
     }
 
