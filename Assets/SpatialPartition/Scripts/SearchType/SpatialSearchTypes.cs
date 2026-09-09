@@ -18,7 +18,8 @@ public interface ISpatialSearcher
 public enum SpatialSearchType
 {
     BruteForce,
-    UniformGrid
+    UniformGrid,
+    QuadTree
 }
 
 public enum GridUpdateMode
