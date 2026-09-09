@@ -234,6 +234,9 @@ public sealed class PerformanceUI : MonoBehaviour
 
         textBuilder.AppendLine();
 
+        AppendGridUpdateMetrics(unitCount);
+        textBuilder.AppendLine();
+
         textBuilder.AppendLine(
             "<size=18><color=#8291A8><b>QUERY RESULT</b></color></size>"
         );
@@ -267,6 +270,69 @@ public sealed class PerformanceUI : MonoBehaviour
         );
 
         ApplyText();
+    }
+
+    private void AppendGridUpdateMetrics(int unitCount)
+    {
+        if (testManager == null)
+            return;
+
+        textBuilder.AppendLine(
+            "<size=18><color=#8291A8><b>GRID UPDATE</b></color></size>"
+        );
+
+        textBuilder.AppendLine(
+            $"<color=#AAB4C3>Mode</color>          " +
+            $"<b>{testManager.GridUpdateMode}</b>"
+        );
+
+        textBuilder.AppendLine(
+            $"<color=#AAB4C3>Moving</color>        " +
+            $"<b>{testManager.LastMovedCount:N0}</b> " +
+            $"<color=#667080>({testManager.MovePercent}%)</color>"
+        );
+
+        textBuilder.AppendLine(
+            $"<color=#AAB4C3>Cell Changed</color>  " +
+            $"<b>{testManager.LastCellChangedCount:N0}</b>"
+        );
+
+        string updateCountLabel =
+            testManager.GridUpdateMode == GridUpdateMode.FullRebuild
+                ? "Re-registered"
+                : "Grid Updated";
+
+        textBuilder.AppendLine(
+            $"<color=#AAB4C3>{updateCountLabel}</color>  " +
+            $"<b>{testManager.LastGridUpdatedCount:N0}</b>" +
+            (testManager.GridUpdateMode == GridUpdateMode.FullRebuild
+                ? $" <color=#667080>/ {unitCount:N0}</color>"
+                : string.Empty)
+        );
+
+        textBuilder.AppendLine(
+            $"<size=22><color=#AAB4C3>AVG UPDATE</color> " +
+            $"<b>{testManager.AverageGridUpdateMilliseconds:F4} ms</b></size>"
+        );
+
+        textBuilder.AppendLine(
+            $"<color=#AAB4C3>Last / Min / Max</color> " +
+            $"{testManager.LastGridUpdateMilliseconds:F4} / " +
+            $"{testManager.MinGridUpdateMilliseconds:F4} / " +
+            $"{testManager.MaxGridUpdateMilliseconds:F4} ms"
+        );
+
+        if (mainUnit != null && mainUnit.HasSearchResult)
+        {
+            double totalMilliseconds =
+                testManager.AverageGridUpdateMilliseconds +
+                mainUnit.LastSearchMilliseconds;
+
+            textBuilder.AppendLine(
+                $"<color=#AAB4C3>Total*</color>        " +
+                $"<b>{totalMilliseconds:F4} ms</b>"
+            );
+        }
     }
 
     private void AppendQueryResult()

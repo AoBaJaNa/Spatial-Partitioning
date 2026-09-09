@@ -84,14 +84,10 @@ public class MainUnit : MonoBehaviour
         }
     }
 
-    private void RunBenchmark()
+    public void RunBenchmark()
     {
         if (spatialSearcher == null || spatialTestManager == null)
             return;
-
-        if (searchType == SpatialSearchType.UniformGrid)
-            spatialTestManager.BuildGrid();
-
         Vector3 center = transform.position;
         IReadOnlyList<GameObject> units = spatialTestManager.SpawnedUnits;
         IReadOnlyDictionary<Vector2Int, List<GameObject>> grid =
@@ -165,5 +161,61 @@ public class MainUnit : MonoBehaviour
     {
         Gizmos.color = Color.red;
         Gizmos.DrawWireSphere(transform.position, searchRadius);
+    }
+
+    [ContextMenu("Validate Uniform Grid Search")]
+    public void ValidateUniformGridSearch()
+    {
+        if (spatialTestManager == null)
+            spatialTestManager = FindFirstObjectByType<SpatialTestManager>();
+
+        if (spatialTestManager == null)
+        {
+            UnityEngine.Debug.LogError(
+                "SpatialTestManager was not found.",
+                this);
+            return;
+        }
+
+        var bruteForceResult = new List<Transform>();
+        var uniformGridResult = new List<Transform>();
+        IReadOnlyList<GameObject> units = spatialTestManager.SpawnedUnits;
+
+        new BruteForceSearcher().Search(
+            transform.position,
+            searchRadius,
+            units,
+            bruteForceResult,
+            out _);
+
+        new UniformGridSearcher().Search(
+            transform.position,
+            searchRadius,
+            units,
+            uniformGridResult,
+            out _,
+            spatialTestManager.UnitGridDic,
+            spatialTestManager.CellSize);
+
+        var uniformGridSet = new HashSet<Transform>(uniformGridResult);
+        bool isMatch = bruteForceResult.Count == uniformGridResult.Count;
+
+        for (int i = 0; i < bruteForceResult.Count && isMatch; i++)
+            isMatch = uniformGridSet.Contains(bruteForceResult[i]);
+
+        if (isMatch)
+        {
+            UnityEngine.Debug.Log(
+                $"Grid search validation passed: " +
+                $"{bruteForceResult.Count:N0} matches.",
+                this);
+            return;
+        }
+
+        UnityEngine.Debug.LogError(
+            $"Grid search validation failed. Brute Force: " +
+            $"{bruteForceResult.Count:N0}, Uniform Grid: " +
+            $"{uniformGridResult.Count:N0}.",
+            this);
     }
 }

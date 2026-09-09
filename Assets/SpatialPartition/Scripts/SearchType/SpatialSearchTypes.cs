@@ -20,3 +20,10 @@ public enum SpatialSearchType
     BruteForce,
     UniformGrid
 }
+
+public enum GridUpdateMode
+{
+    Static,
+    FullRebuild,
+    Dynamic
+}

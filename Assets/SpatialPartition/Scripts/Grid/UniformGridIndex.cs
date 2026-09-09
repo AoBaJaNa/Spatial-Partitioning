@@ -35,23 +35,91 @@ public sealed class UniformGridIndex : MonoBehaviour
 
     public void UpdateUnitCell(GameObject unit, Vector2Int originalCell, Vector2Int currentCell)
     {
-
         if (originalCell == currentCell)
             return;
-        
-        if(cells.TryGetValue(originalCell,out var list))
+
+        if (cells.TryGetValue(originalCell, out var list))
         {
             list.Remove(unit);
 
-            if(list.Count == 0)
+            if (list.Count == 0)
                 cells.Remove(originalCell);
         }
-        if (!cells.TryGetValue(currentCell, out var newlist))
+
+        if (!cells.TryGetValue(currentCell, out var newList))
         {
-            newlist = new List<GameObject>();
-            cells[currentCell] = newlist;
+            newList = new List<GameObject>();
+            cells.Add(currentCell, newList);
         }
-            newlist.Add(unit);
+
+        newList.Add(unit);
+    }
+
+    public bool Validate(
+        IReadOnlyList<GameObject> units,
+        out string validationMessage)
+    {
+        var indexedUnits = new HashSet<GameObject>();
+
+        foreach (KeyValuePair<Vector2Int, List<GameObject>> entry in cells)
+        {
+            List<GameObject> bucket = entry.Value;
+
+            if (bucket == null)
+            {
+                validationMessage = $"Cell {entry.Key} has a null bucket.";
+                return false;
+            }
+
+            for (int i = 0; i < bucket.Count; i++)
+            {
+                GameObject unit = bucket[i];
+
+                if (unit == null)
+                {
+                    validationMessage =
+                        $"Cell {entry.Key} contains a null unit.";
+                    return false;
+                }
+
+                if (WorldToCell(unit.transform.position) != entry.Key)
+                {
+                    validationMessage =
+                        $"{unit.name} is registered in the wrong cell.";
+                    return false;
+                }
+
+                if (!indexedUnits.Add(unit))
+                {
+                    validationMessage =
+                        $"{unit.name} is registered more than once.";
+                    return false;
+                }
+            }
+        }
+
+        int expectedUnitCount = 0;
+
+        for (int i = 0; i < units.Count; i++)
+        {
+            GameObject unit = units[i];
+
+            if (unit == null)
+                continue;
+
+            expectedUnitCount++;
+
+            if (!indexedUnits.Contains(unit))
+            {
+                validationMessage =
+                    $"{unit.name} is missing from the grid.";
+                return false;
+            }
+        }
+
+        validationMessage =
+            $"{expectedUnitCount:N0} units are registered exactly once.";
+        return true;
     }
     public void Clear()
     {

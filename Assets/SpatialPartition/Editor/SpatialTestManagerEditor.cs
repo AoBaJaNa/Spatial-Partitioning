@@ -15,5 +15,25 @@ public sealed class SpatialTestManagerEditor : Editor
 
         if (GUILayout.Button("Clear Units", GUILayout.Height(30f)))
             manager.ClearUnits();
+
+        GUILayout.Space(8f);
+
+        if (GUILayout.Button("Reset Grid Update Metrics", GUILayout.Height(26f)))
+            manager.ResetGridUpdateMetrics();
+
+        if (GUILayout.Button("Validate Grid Integrity", GUILayout.Height(26f)))
+            manager.ValidateGridIntegrity();
+
+        GUILayout.Space(8f);
+        using (new EditorGUI.DisabledScope(!Application.isPlaying ||
+                                          manager.IsBatchBenchmarkRunning))
+        {
+            if (GUILayout.Button(
+                    "Run Grid Update Benchmark (CSV)",
+                    GUILayout.Height(30f)))
+            {
+                manager.RunBatchBenchmark();
+            }
+        }
     }
 }
