@@ -3,26 +3,6 @@ using System.Diagnostics;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
-public interface ISpatialSearcher
-{
-    string ModeName { get; }
-
-    void Search(
-        Vector3 center,
-        float radius,
-        IReadOnlyList<GameObject> allUnits,
-        List<Transform> outResult,
-        out int checkCount,
-        IReadOnlyDictionary<Vector2Int, List<GameObject>> gridDic = null,
-        float cellSize = 10f);
-}
-
-public enum SpatialSearchType
-{
-    BruteForce,
-    UniformGrid
-}
-
 public class MainUnit : MonoBehaviour
 {
     [Header("Common Setting")]
@@ -109,11 +89,14 @@ public class MainUnit : MonoBehaviour
         if (spatialSearcher == null || spatialTestManager == null)
             return;
 
+        if (searchType == SpatialSearchType.UniformGrid)
+            spatialTestManager.BuildGrid();
+
         Vector3 center = transform.position;
         IReadOnlyList<GameObject> units = spatialTestManager.SpawnedUnits;
         IReadOnlyDictionary<Vector2Int, List<GameObject>> grid =
             spatialTestManager.UnitGridDic;
-        float cellSize = spatialTestManager.cellSize;
+        float cellSize = spatialTestManager.CellSize;
 
         int validWarmupCount = Mathf.Max(0, warmupCount);
         int validSampleCount = Mathf.Max(1, sampleCount);

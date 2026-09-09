@@ -228,7 +228,7 @@ public sealed class PerformanceUI : MonoBehaviour
         {
             textBuilder.AppendLine(
                 $"<color=#AAB4C3>Cell Size</color>     " +
-                $"<b>{testManager.cellSize:F1} m</b>"
+                $"<b>{testManager.CellSize:F1} m</b>"
             );
         }
 

@@ -8,7 +8,7 @@ public class UniformGridSearcher : ISpatialSearcher
 
     private static readonly ProfilerMarker SearchProfilerMarker =
         new("Uniform Grid");
-
+    
     public void Search(
         Vector3 center,
         float radius,
@@ -31,6 +31,8 @@ public class UniformGridSearcher : ISpatialSearcher
             );
 
             int cellRange = Mathf.CeilToInt(radius / cellSize);
+
+
 
             for (int x = -cellRange; x <= cellRange; x++)
             {
