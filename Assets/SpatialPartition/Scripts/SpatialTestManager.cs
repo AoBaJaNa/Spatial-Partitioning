@@ -21,6 +21,9 @@ public sealed class SpatialTestManager : MonoBehaviour
         GridUpdateMode.Dynamic;
     [SerializeField, Min(0)] private int benchmarkWarmupFrames = 60;
     [SerializeField, Min(1)] private int benchmarkSampleFrames = 300;
+    [SerializeField, Min(0.0001f)] private float benchmarkDeltaTime =
+        1f / 60f;
+    [SerializeField] private float[] benchmarkCellSizes = { 10f, 5f, 2.5f };
 
     public int SpawnCount => unitSpawner != null ? unitSpawner.SpawnCount : 0;
     public float CellSize => uniformGridIndex != null ? uniformGridIndex.CellSize : 0f;
@@ -74,7 +77,10 @@ public sealed class SpatialTestManager : MonoBehaviour
             return;
         }
 
-        movementSimulation.MoveUnits(units, Time.deltaTime);
+        float simulationDeltaTime = IsBatchBenchmarkRunning
+            ? benchmarkDeltaTime
+            : Time.deltaTime;
+        movementSimulation.MoveUnits(units, simulationDeltaTime);
 
         int gridUpdatedCount;
         int cellChangedCount;
@@ -107,11 +113,6 @@ public sealed class SpatialTestManager : MonoBehaviour
     }
 
     private void Reset()
-    {
-        ResolveComponents();
-    }
-
-    private void OnValidate()
     {
         ResolveComponents();
     }
@@ -213,6 +214,7 @@ public sealed class SpatialTestManager : MonoBehaviour
         IsBatchBenchmarkRunning = true;
         GridUpdateMode previousMode = gridUpdateMode;
         int previousMovePercent = movementSimulation.MovePercent;
+        float previousCellSize = uniformGridIndex.CellSize;
         IReadOnlyList<GameObject> units = unitSpawner.Units;
 
         movementSimulation.Initialize(units);
@@ -220,17 +222,50 @@ public sealed class SpatialTestManager : MonoBehaviour
 
         csvBuilder.Clear();
         csvBuilder.AppendLine(
-            "Mode,MovePercent,Moving,CellChanged,GridUpdates," +
-            "GridAvgMs,GridMinMs,GridMaxMs,QueryAvgMs,SpatialCostMs," +
-            "GridIntegrity,BruteForceFound,UniformGridFound," +
+            "Experiment,Mode,CellSize,MovePercent,Moving,CellChanged," +
+            "GridUpdates,GridAvgMs,GridMinMs,GridMaxMs,QueryAvgMs," +
+            "SpatialCostMs,GridIntegrity,BruteForceFound,UniformGridFound," +
             "SearchIntegrity,Units,GridSamples,QuerySamples");
 
-        yield return RunBenchmarkCase(GridUpdateMode.Dynamic, 10);
-        yield return RunBenchmarkCase(GridUpdateMode.Dynamic, 50);
-        yield return RunBenchmarkCase(GridUpdateMode.Dynamic, 100);
-        yield return RunBenchmarkCase(GridUpdateMode.FullRebuild, 100);
+        yield return RunBenchmarkCase(
+            "MovePercentSweep",
+            GridUpdateMode.Dynamic,
+            10,
+            previousCellSize);
+        yield return RunBenchmarkCase(
+            "MovePercentSweep",
+            GridUpdateMode.Dynamic,
+            50,
+            previousCellSize);
+        yield return RunBenchmarkCase(
+            "MovePercentSweep",
+            GridUpdateMode.Dynamic,
+            100,
+            previousCellSize);
+        yield return RunBenchmarkCase(
+            "MovePercentSweep",
+            GridUpdateMode.FullRebuild,
+            100,
+            previousCellSize);
+
+        for (int i = 0; i < benchmarkCellSizes.Length; i++)
+        {
+            float cellSize = benchmarkCellSizes[i];
+
+            yield return RunBenchmarkCase(
+                "CellSizeSweep",
+                GridUpdateMode.Dynamic,
+                100,
+                cellSize);
+            yield return RunBenchmarkCase(
+                "CellSizeSweep",
+                GridUpdateMode.FullRebuild,
+                100,
+                cellSize);
+        }
 
         ConfigureTestCase(previousMode, previousMovePercent);
+        uniformGridIndex.SetCellSize(previousCellSize);
         movementSimulation.RestoreInitialPositions(units);
         movementSimulation.Initialize(units);
         BuildGrid();
@@ -247,10 +282,13 @@ public sealed class SpatialTestManager : MonoBehaviour
     }
 
     private IEnumerator RunBenchmarkCase(
+        string experiment,
         GridUpdateMode mode,
-        int movePercent)
+        int movePercent,
+        float cellSize)
     {
         ConfigureTestCase(mode, movePercent);
+        uniformGridIndex.SetCellSize(cellSize);
         movementSimulation.RestoreInitialPositions(unitSpawner.Units);
         movementSimulation.Initialize(unitSpawner.Units);
         BuildGrid();
@@ -283,10 +321,12 @@ public sealed class SpatialTestManager : MonoBehaviour
 
         csvBuilder.AppendFormat(
             CultureInfo.InvariantCulture,
-            "{0},{1},{2:F3},{3:F3},{4:F3},{5:F6},{6:F6}," +
-            "{7:F6},{8:F6},{9:F6},{10},{11},{12},{13},{14}," +
-            "{15},{16}\n",
+            "{0},{1},{2:F3},{3},{4:F3},{5:F3},{6:F3},{7:F6}," +
+            "{8:F6},{9:F6},{10:F6},{11:F6},{12},{13},{14}," +
+            "{15},{16},{17},{18}\n",
+            experiment,
             mode,
+            cellSize,
             movePercent,
             AverageMovedCount,
             AverageCellChangedCount,
@@ -373,5 +413,19 @@ public sealed class SpatialTestManager : MonoBehaviour
 
         if (movementSimulation == null)
             movementSimulation = GetComponent<SpatialUnitMovementSimulation>();
+    }
+
+    private void OnValidate()
+    {
+        ResolveComponents();
+        benchmarkWarmupFrames = Mathf.Max(0, benchmarkWarmupFrames);
+        benchmarkSampleFrames = Mathf.Max(1, benchmarkSampleFrames);
+        benchmarkDeltaTime = Mathf.Max(0.0001f, benchmarkDeltaTime);
+
+        if (benchmarkCellSizes == null || benchmarkCellSizes.Length == 0)
+            benchmarkCellSizes = new[] { 10f, 5f, 2.5f };
+
+        for (int i = 0; i < benchmarkCellSizes.Length; i++)
+            benchmarkCellSizes[i] = Mathf.Max(0.01f, benchmarkCellSizes[i]);
     }
 }

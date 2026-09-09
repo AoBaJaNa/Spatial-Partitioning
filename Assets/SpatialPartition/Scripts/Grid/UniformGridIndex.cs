@@ -10,6 +10,11 @@ public sealed class UniformGridIndex : MonoBehaviour
     public float CellSize => cellSize;
     public IReadOnlyDictionary<Vector2Int, List<GameObject>> Cells => cells;
     public Vector2Int[] unitCellSave;
+
+    public void SetCellSize(float value)
+    {
+        cellSize = Mathf.Max(0.01f, value);
+    }
     public void Rebuild(IReadOnlyList<GameObject> units)
     {
         cells.Clear();
