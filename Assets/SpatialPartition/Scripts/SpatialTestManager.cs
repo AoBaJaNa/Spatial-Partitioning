@@ -70,38 +70,35 @@ public sealed class SpatialTestManager : MonoBehaviour
 
         if (gridUpdateMode == GridUpdateMode.Static)
         {
-            movementSimulation.ClearFrameStats();
             RecordGridUpdate(0d, 0, 0, 0);
             return;
         }
 
-        bool updateGridDynamically = gridUpdateMode == GridUpdateMode.Dynamic;
-
-        movementSimulation.Tick(
-            units,
-            Time.deltaTime,
-            updateGridDynamically);
+        movementSimulation.MoveUnits(units, Time.deltaTime);
 
         int gridUpdatedCount;
+        int cellChangedCount;
+        long startedAt = Stopwatch.GetTimestamp();
 
         if (gridUpdateMode == GridUpdateMode.FullRebuild)
         {
-            long startedAt = Stopwatch.GetTimestamp();
             uniformGridIndex.Rebuild(units);
-            long finishedAt = Stopwatch.GetTimestamp();
-            LastGridUpdateMilliseconds =
-                (finishedAt - startedAt) * 1000d / Stopwatch.Frequency;
             gridUpdatedCount = units.Count;
+            cellChangedCount = 0;
         }
         else
         {
-            LastGridUpdateMilliseconds =
-                movementSimulation.LastDynamicGridUpdateMilliseconds;
-            gridUpdatedCount = movementSimulation.LastCellChangedCount;
+            cellChangedCount = uniformGridIndex.UpdateMovedUnits(
+                units,
+                movementSimulation.MovingUnitIndices);
+            gridUpdatedCount = cellChangedCount;
         }
 
+        long finishedAt = Stopwatch.GetTimestamp();
+        LastGridUpdateMilliseconds =
+            (finishedAt - startedAt) * 1000d / Stopwatch.Frequency;
         LastMovedCount = movementSimulation.LastMovedCount;
-        LastCellChangedCount = movementSimulation.LastCellChangedCount;
+        LastCellChangedCount = cellChangedCount;
         RecordGridUpdate(
             LastGridUpdateMilliseconds,
             gridUpdatedCount,
@@ -174,11 +171,7 @@ public sealed class SpatialTestManager : MonoBehaviour
     [ContextMenu("Validate Grid Integrity")]
     public void ValidateGridIntegrity()
     {
-        ResolveComponents();
-
-        if (uniformGridIndex.Validate(
-                unitSpawner.Units,
-                out string validationMessage))
+        if (TryValidateGridIntegrity(out string validationMessage))
         {
             UnityEngine.Debug.Log(
                 $"Grid validation passed: {validationMessage}",
@@ -189,6 +182,14 @@ public sealed class SpatialTestManager : MonoBehaviour
         UnityEngine.Debug.LogError(
             $"Grid validation failed: {validationMessage}",
             this);
+    }
+
+    public bool TryValidateGridIntegrity(out string validationMessage)
+    {
+        ResolveComponents();
+        return uniformGridIndex.Validate(
+            unitSpawner.Units,
+            out validationMessage);
     }
 
     public void RunBatchBenchmark()
@@ -219,9 +220,10 @@ public sealed class SpatialTestManager : MonoBehaviour
 
         csvBuilder.Clear();
         csvBuilder.AppendLine(
-            "Mode,MovingPercent,Units,MovingAvg,CellChangedAvg," +
-            "GridUpdatedAvg,GridUpdateAvgMs,GridUpdateMinMs," +
-            "GridUpdateMaxMs,QueryAvgMs,TotalMs,GridSamples,QuerySamples");
+            "Mode,MovePercent,Moving,CellChanged,GridUpdates," +
+            "GridAvgMs,GridMinMs,GridMaxMs,QueryAvgMs,SpatialCostMs," +
+            "GridIntegrity,BruteForceFound,UniformGridFound," +
+            "SearchIntegrity,Units,GridSamples,QuerySamples");
 
         yield return RunBenchmarkCase(GridUpdateMode.Dynamic, 10);
         yield return RunBenchmarkCase(GridUpdateMode.Dynamic, 50);
@@ -271,14 +273,21 @@ public sealed class SpatialTestManager : MonoBehaviour
         int querySamples = mainUnit != null
             ? mainUnit.LastSampleCount
             : 0;
+        bool gridIntegrity = TryValidateGridIntegrity(out _);
+        int bruteForceFound = 0;
+        int uniformGridFound = 0;
+        bool searchIntegrity = mainUnit != null &&
+            mainUnit.TryValidateUniformGridSearch(
+                out bruteForceFound,
+                out uniformGridFound);
 
         csvBuilder.AppendFormat(
             CultureInfo.InvariantCulture,
-            "{0},{1},{2},{3:F3},{4:F3},{5:F3},{6:F6},{7:F6}," +
-            "{8:F6},{9:F6},{10:F6},{11},{12}\n",
+            "{0},{1},{2:F3},{3:F3},{4:F3},{5:F6},{6:F6}," +
+            "{7:F6},{8:F6},{9:F6},{10},{11},{12},{13},{14}," +
+            "{15},{16}\n",
             mode,
             movePercent,
-            unitSpawner.Units.Count,
             AverageMovedCount,
             AverageCellChangedCount,
             AverageGridUpdatedCount,
@@ -287,6 +296,11 @@ public sealed class SpatialTestManager : MonoBehaviour
             MaxGridUpdateMilliseconds,
             queryMilliseconds,
             AverageGridUpdateMilliseconds + queryMilliseconds,
+            gridIntegrity ? "PASS" : "FAIL",
+            bruteForceFound,
+            uniformGridFound,
+            searchIntegrity ? "PASS" : "FAIL",
+            unitSpawner.Units.Count,
             GridUpdateSampleCount,
             querySamples);
     }

@@ -1,6 +1,4 @@
-using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using UnityEngine;
 
 public sealed class SpatialUnitMovementSimulation : MonoBehaviour
@@ -14,20 +12,11 @@ public sealed class SpatialUnitMovementSimulation : MonoBehaviour
     private Vector3[] origins;
     private Vector3[] directions;
     private int[] movingUnitIndices;
-    private Vector2Int[] previousCells;
     private int selectedMovePercent = -1;
-
-    private UniformGridIndex uniformGridIndex;
 
     public int MovePercent => movePercent;
     public int LastMovedCount { get; private set; }
-    public int LastCellChangedCount { get; private set; }
-    public double LastDynamicGridUpdateMilliseconds { get; private set; }
-
-    private void Awake()
-    {
-        uniformGridIndex = GetComponent<UniformGridIndex>();
-    }
+    public IReadOnlyList<int> MovingUnitIndices => movingUnitIndices;
 
     public void SetMovePercent(int value)
     {
@@ -74,12 +63,11 @@ public sealed class SpatialUnitMovementSimulation : MonoBehaviour
         }
     }
 
-    public void Tick(
+    public void MoveUnits(
         IReadOnlyList<GameObject> units,
-        float deltaTime,
-        bool updateGridDynamically)
+        float deltaTime)
     {
-        ClearFrameStats();
+        LastMovedCount = 0;
 
         if (movePercent <= 0 || units.Count == 0)
             return;
@@ -93,19 +81,6 @@ public sealed class SpatialUnitMovementSimulation : MonoBehaviour
             SelectMovingUnits(units.Count, CreateSelectionRandom(units.Count));
         }
 
-        long gridStartedAt = Stopwatch.GetTimestamp();
-
-        for (int i = 0; i < movingUnitIndices.Length; i++)
-        {
-            GameObject unit = units[movingUnitIndices[i]];
-            previousCells[i] = unit != null
-                ? uniformGridIndex.WorldToCell(unit.transform.position)
-                : default;
-        }
-
-        long gridFinishedAt = Stopwatch.GetTimestamp();
-        double gridElapsedMilliseconds =
-            (gridFinishedAt - gridStartedAt) * 1000d / Stopwatch.Frequency;
         float maxDistanceSqr = moveRange * moveRange;
 
         for (int i = 0; i < movingUnitIndices.Length; i++)
@@ -128,45 +103,6 @@ public sealed class SpatialUnitMovementSimulation : MonoBehaviour
                 directions[unitIndex] = -directions[unitIndex];
             }
         }
-
-        gridStartedAt = Stopwatch.GetTimestamp();
-
-        for (int i = 0; i < movingUnitIndices.Length; i++)
-        {
-            int unitIndex = movingUnitIndices[i];
-            GameObject unit = units[unitIndex];
-
-            if (unit == null)
-                continue;
-
-            Vector2Int currentCell =
-                uniformGridIndex.WorldToCell(unit.transform.position);
-
-            if (previousCells[i] == currentCell)
-                continue;
-
-            LastCellChangedCount++;
-
-            if (updateGridDynamically)
-            {
-                uniformGridIndex.UpdateUnitCell(
-                    unit,
-                    previousCells[i],
-                    currentCell);
-            }
-        }
-
-        gridFinishedAt = Stopwatch.GetTimestamp();
-        LastDynamicGridUpdateMilliseconds =
-            gridElapsedMilliseconds +
-            (gridFinishedAt - gridStartedAt) * 1000d / Stopwatch.Frequency;
-    }
-
-    public void ClearFrameStats()
-    {
-        LastMovedCount = 0;
-        LastCellChangedCount = 0;
-        LastDynamicGridUpdateMilliseconds = 0d;
     }
 
     private System.Random CreateSelectionRandom(int unitCount)
@@ -184,7 +120,6 @@ public sealed class SpatialUnitMovementSimulation : MonoBehaviour
         selectedMovePercent = Mathf.Clamp(movePercent, 0, 100);
         int movingCount = unitCount * selectedMovePercent / 100;
         movingUnitIndices = new int[movingCount];
-        previousCells = new Vector2Int[movingCount];
 
         int[] indexPool = new int[unitCount];
 
@@ -206,9 +141,8 @@ public sealed class SpatialUnitMovementSimulation : MonoBehaviour
         origins = null;
         directions = null;
         movingUnitIndices = null;
-        previousCells = null;
         selectedMovePercent = -1;
-        ClearFrameStats();
+        LastMovedCount = 0;
     }
 
     private void OnValidate()

@@ -324,13 +324,13 @@ public sealed class PerformanceUI : MonoBehaviour
 
         if (mainUnit != null && mainUnit.HasSearchResult)
         {
-            double totalMilliseconds =
+            double spatialCostMilliseconds =
                 testManager.AverageGridUpdateMilliseconds +
                 mainUnit.LastSearchMilliseconds;
 
             textBuilder.AppendLine(
-                $"<color=#AAB4C3>Total*</color>        " +
-                $"<b>{totalMilliseconds:F4} ms</b>"
+                $"<color=#AAB4C3>Spatial Cost*</color> " +
+                $"<b>{spatialCostMilliseconds:F4} ms</b>"
             );
         }
     }

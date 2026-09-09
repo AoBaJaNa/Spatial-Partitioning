@@ -166,15 +166,39 @@ public class MainUnit : MonoBehaviour
     [ContextMenu("Validate Uniform Grid Search")]
     public void ValidateUniformGridSearch()
     {
+        bool isMatch = TryValidateUniformGridSearch(
+            out int bruteForceFound,
+            out int uniformGridFound);
+
+        if (isMatch)
+        {
+            UnityEngine.Debug.Log(
+                $"Grid search validation passed: " +
+                $"{bruteForceFound:N0} matches.",
+                this);
+            return;
+        }
+
+        UnityEngine.Debug.LogError(
+            $"Grid search validation failed. Brute Force: " +
+            $"{bruteForceFound:N0}, Uniform Grid: " +
+            $"{uniformGridFound:N0}.",
+            this);
+    }
+
+    public bool TryValidateUniformGridSearch(
+        out int bruteForceFound,
+        out int uniformGridFound)
+    {
+        bruteForceFound = 0;
+        uniformGridFound = 0;
+
         if (spatialTestManager == null)
             spatialTestManager = FindFirstObjectByType<SpatialTestManager>();
 
         if (spatialTestManager == null)
         {
-            UnityEngine.Debug.LogError(
-                "SpatialTestManager was not found.",
-                this);
-            return;
+            return false;
         }
 
         var bruteForceResult = new List<Transform>();
@@ -197,25 +221,14 @@ public class MainUnit : MonoBehaviour
             spatialTestManager.UnitGridDic,
             spatialTestManager.CellSize);
 
+        bruteForceFound = bruteForceResult.Count;
+        uniformGridFound = uniformGridResult.Count;
         var uniformGridSet = new HashSet<Transform>(uniformGridResult);
-        bool isMatch = bruteForceResult.Count == uniformGridResult.Count;
+        bool isMatch = bruteForceFound == uniformGridFound;
 
         for (int i = 0; i < bruteForceResult.Count && isMatch; i++)
             isMatch = uniformGridSet.Contains(bruteForceResult[i]);
 
-        if (isMatch)
-        {
-            UnityEngine.Debug.Log(
-                $"Grid search validation passed: " +
-                $"{bruteForceResult.Count:N0} matches.",
-                this);
-            return;
-        }
-
-        UnityEngine.Debug.LogError(
-            $"Grid search validation failed. Brute Force: " +
-            $"{bruteForceResult.Count:N0}, Uniform Grid: " +
-            $"{uniformGridResult.Count:N0}.",
-            this);
+        return isMatch;
     }
 }

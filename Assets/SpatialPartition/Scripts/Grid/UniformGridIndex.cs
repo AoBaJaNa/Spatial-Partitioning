@@ -9,10 +9,12 @@ public sealed class UniformGridIndex : MonoBehaviour
 
     public float CellSize => cellSize;
     public IReadOnlyDictionary<Vector2Int, List<GameObject>> Cells => cells;
-
+    public Vector2Int[] unitCellSave;
     public void Rebuild(IReadOnlyList<GameObject> units)
     {
         cells.Clear();
+
+        unitCellSave = new Vector2Int[units.Count];
 
         for (int i = 0; i < units.Count; i++)
         {
@@ -22,6 +24,8 @@ public sealed class UniformGridIndex : MonoBehaviour
                 continue;
 
             Vector2Int cell = WorldToCell(unit.transform.position);
+
+            unitCellSave[i] = cell;
 
             if (!cells.TryGetValue(cell, out List<GameObject> bucket))
             {
@@ -33,8 +37,13 @@ public sealed class UniformGridIndex : MonoBehaviour
         }
     }
 
-    public void UpdateUnitCell(GameObject unit, Vector2Int originalCell, Vector2Int currentCell)
+    public void UpdateUnitCell(
+        int unitIndex,
+        GameObject unit,
+        Vector2Int currentCell)
     {
+        Vector2Int originalCell = unitCellSave[unitIndex];
+
         if (originalCell == currentCell)
             return;
 
@@ -53,6 +62,44 @@ public sealed class UniformGridIndex : MonoBehaviour
         }
 
         newList.Add(unit);
+        unitCellSave[unitIndex] = currentCell;
+    }
+
+    public int UpdateMovedUnits(
+        IReadOnlyList<GameObject> units,
+        IReadOnlyList<int> movedUnitIndices)
+    {
+        if (movedUnitIndices == null)
+            return 0;
+
+        if (unitCellSave == null || unitCellSave.Length != units.Count)
+        {
+            Debug.LogError(
+                "Unit cell cache is not initialized. Rebuild the grid first.",
+                this);
+            return 0;
+        }
+
+        int cellChangedCount = 0;
+
+        for (int i = 0; i < movedUnitIndices.Count; i++)
+        {
+            int unitIndex = movedUnitIndices[i];
+            GameObject unit = units[unitIndex];
+
+            if (unit == null)
+                continue;
+
+            Vector2Int currentCell = WorldToCell(unit.transform.position);
+
+            if (unitCellSave[unitIndex] == currentCell)
+                continue;
+
+            cellChangedCount++;
+            UpdateUnitCell(unitIndex, unit, currentCell);
+        }
+
+        return cellChangedCount;
     }
 
     public bool Validate(
@@ -115,6 +162,15 @@ public sealed class UniformGridIndex : MonoBehaviour
                     $"{unit.name} is missing from the grid.";
                 return false;
             }
+
+            if (unitCellSave == null ||
+                unitCellSave.Length != units.Count ||
+                unitCellSave[i] != WorldToCell(unit.transform.position))
+            {
+                validationMessage =
+                    $"{unit.name} has an invalid cached cell.";
+                return false;
+            }
         }
 
         validationMessage =
@@ -124,6 +180,7 @@ public sealed class UniformGridIndex : MonoBehaviour
     public void Clear()
     {
         cells.Clear();
+        unitCellSave = null;
     }
 
     public Vector2Int WorldToCell(Vector3 position)
