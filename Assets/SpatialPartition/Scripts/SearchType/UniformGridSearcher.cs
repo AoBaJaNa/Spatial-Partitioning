@@ -16,7 +16,8 @@ public class UniformGridSearcher : ISpatialSearcher
         List<Transform> outResult,
         out int checkCount,
         IReadOnlyDictionary<Vector2Int, List<GameObject>> gridDic,
-        float cellSize)
+        float cellSize,
+        QuadtreeNode quadTree)
     {
         using (SearchProfilerMarker.Auto())
         {

@@ -12,7 +12,8 @@ public interface ISpatialSearcher
         List<Transform> outResult,
         out int checkCount,
         IReadOnlyDictionary<Vector2Int, List<GameObject>> gridDic = null,
-        float cellSize = 10f);
+        float cellSize = 10f,
+        QuadtreeNode quadTree = null);
 }
 
 public enum SpatialSearchType

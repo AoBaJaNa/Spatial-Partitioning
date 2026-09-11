@@ -12,8 +12,9 @@ public class BruteForceSearcher : ISpatialSearcher
         IReadOnlyList<GameObject> allUnits,
         List<Transform> outResult,
         out int checkCount,
-        IReadOnlyDictionary<Vector2Int, List<GameObject>> dic = null,
-        float cellSize = 10f)
+        IReadOnlyDictionary<Vector2Int, List<GameObject>> dic,
+        float cellSize,
+        QuadtreeNode quadtreeNode)
     {
         using (SearchProfilerMarker.Auto())
         {
