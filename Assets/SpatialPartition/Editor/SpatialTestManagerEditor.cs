@@ -24,6 +24,15 @@ public sealed class SpatialTestManagerEditor : Editor
         if (GUILayout.Button("Validate Grid Integrity", GUILayout.Height(26f)))
             manager.ValidateGridIntegrity();
 
+        using (new EditorGUI.DisabledScope(!Application.isPlaying))
+        {
+            if (GUILayout.Button("Run Search Benchmark", GUILayout.Height(26f)))
+                manager.RunSearchBenchmark();
+
+            if (GUILayout.Button("Validate Uniform Grid Search", GUILayout.Height(26f)))
+                manager.ValidateUniformGridSearch();
+        }
+
         GUILayout.Space(8f);
         using (new EditorGUI.DisabledScope(!Application.isPlaying ||
                                           manager.IsBatchBenchmarkRunning))

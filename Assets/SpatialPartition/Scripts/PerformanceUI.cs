@@ -62,7 +62,7 @@ public sealed class PerformanceUI : MonoBehaviour
         if (testManager == null)
             testManager = FindFirstObjectByType<SpatialTestManager>();
 
-        if (mainUnit == null)
+        if (mainUnit == null || testManager == null)
             mainUnit = FindFirstObjectByType<MainUnit>();
 
         RefreshText();
@@ -210,7 +210,7 @@ public sealed class PerformanceUI : MonoBehaviour
 
         textBuilder.AppendLine(
             $"<color=#AAB4C3>Mode</color>          " +
-            $"<b><color=#FFFFFF>{mainUnit.searchType.ToString()}</color></b>"
+            $"<b><color=#FFFFFF>{testManager.SearchType}</color></b>"
         );
 
         textBuilder.AppendLine(
@@ -223,8 +223,7 @@ public sealed class PerformanceUI : MonoBehaviour
             $"<b>{mainUnit.searchRadius:F1} m</b>"
         );
 
-        if (mainUnit.searchType == SpatialSearchType.UniformGrid &&
-            testManager != null)
+        if (testManager.SearchType == SpatialSearchType.UniformGrid)
         {
             textBuilder.AppendLine(
                 $"<color=#AAB4C3>Cell Size</color>     " +
@@ -241,7 +240,7 @@ public sealed class PerformanceUI : MonoBehaviour
             "<size=18><color=#8291A8><b>QUERY RESULT</b></color></size>"
         );
 
-        if (mainUnit.HasSearchResult)
+        if (testManager.HasSearchResult)
         {
             AppendQueryResult();
         }
@@ -322,11 +321,11 @@ public sealed class PerformanceUI : MonoBehaviour
             $"{testManager.MaxGridUpdateMilliseconds:F4} ms"
         );
 
-        if (mainUnit != null && mainUnit.HasSearchResult)
+        if (testManager.HasSearchResult)
         {
             double spatialCostMilliseconds =
                 testManager.AverageGridUpdateMilliseconds +
-                mainUnit.LastSearchMilliseconds;
+                testManager.LastSearchMilliseconds;
 
             textBuilder.AppendLine(
                 $"<color=#AAB4C3>Spatial Cost*</color> " +
@@ -337,8 +336,8 @@ public sealed class PerformanceUI : MonoBehaviour
 
     private void AppendQueryResult()
     {
-        int checkedCount = mainUnit.LastCheckCount;
-        int foundCount = mainUnit.LastFoundCount;
+        int checkedCount = testManager.LastCheckCount;
+        int foundCount = testManager.LastFoundCount;
 
         float candidateRatio =
             testManager != null &&
@@ -347,8 +346,8 @@ public sealed class PerformanceUI : MonoBehaviour
                 : 0f;
 
         string queryColor =
-            mainUnit.LastSearchMilliseconds <= 1d ? "#5EE685" :
-            mainUnit.LastSearchMilliseconds <= 5d ? "#FFD166" :
+            testManager.LastSearchMilliseconds <= 1d ? "#5EE685" :
+            testManager.LastSearchMilliseconds <= 5d ? "#FFD166" :
             "#FF7676";
 
         textBuilder.AppendLine(
@@ -371,19 +370,19 @@ public sealed class PerformanceUI : MonoBehaviour
         textBuilder.AppendLine(
             $"<size=25>" +
             $"<color=#AAB4C3>AVG QUERY</color>   " +
-            $"<color={queryColor}><b>{mainUnit.LastSearchMilliseconds:F4} ms</b></color>" +
+            $"<color={queryColor}><b>{testManager.LastSearchMilliseconds:F4} ms</b></color>" +
             $"</size>"
         );
 
         textBuilder.AppendLine(
             $"<color=#AAB4C3>Min / Max</color>     " +
-            $"{mainUnit.MinSearchMilliseconds:F4} / " +
-            $"{mainUnit.MaxSearchMilliseconds:F4} ms"
+            $"{testManager.MinSearchMilliseconds:F4} / " +
+            $"{testManager.MaxSearchMilliseconds:F4} ms"
         );
 
         textBuilder.AppendLine(
             $"<color=#AAB4C3>Samples</color>       " +
-            $"<b>{mainUnit.LastSampleCount}</b>"
+            $"<b>{testManager.LastSearchSampleCount}</b>"
         );
     }
 

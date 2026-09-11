@@ -116,8 +116,20 @@ public class QuadtreeNode
 public class QuadTreeIndex : MonoBehaviour
 {
     public QuadtreeNode QuadtreeNode { get; private set;}
+
+    public void Clear()
+    {
+        QuadtreeNode = null;
+    }
+
    public void QuadTreeBuild(IReadOnlyList<GameObject> allUnits)
     {
+        if (allUnits == null || allUnits.Count == 0)
+        {
+            Clear();
+            return;
+        }
+
         float maxX = float.MinValue;
         float minX = float.MaxValue;
         float maxY = float.MinValue;

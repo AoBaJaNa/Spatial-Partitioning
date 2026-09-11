@@ -5,9 +5,11 @@ using System.Globalization;
 using System.IO;
 using System.Text;
 using UnityEngine;
+using UnityEngine.InputSystem;
 
 [RequireComponent(typeof(SpatialUnitSpawner))]
 [RequireComponent(typeof(UniformGridIndex))]
+[RequireComponent(typeof(QuadTreeIndex))]
 [RequireComponent(typeof(SpatialUnitMovementSimulation))]
 public sealed class SpatialTestManager : MonoBehaviour
 {
@@ -16,6 +18,13 @@ public sealed class SpatialTestManager : MonoBehaviour
     [SerializeField] private UniformGridIndex uniformGridIndex;
     [SerializeField] private QuadTreeIndex quadTreeIndex;
     [SerializeField] private SpatialUnitMovementSimulation movementSimulation;
+
+    [Header("Search Query")]
+    [SerializeField] private MainUnit searchTarget;
+    [SerializeField] private SpatialSearchType searchType =
+        SpatialSearchType.BruteForce;
+    [SerializeField, Min(0)] private int searchWarmupCount = 3;
+    [SerializeField, Min(1)] private int searchSampleCount = 20;
 
     [Header("Grid Update Test")]
     [SerializeField] private GridUpdateMode gridUpdateMode =
@@ -28,6 +37,7 @@ public sealed class SpatialTestManager : MonoBehaviour
 
     public int SpawnCount => unitSpawner != null ? unitSpawner.SpawnCount : 0;
     public float CellSize => uniformGridIndex != null ? uniformGridIndex.CellSize : 0f;
+    public SpatialSearchType SearchType => searchType;
     public GridUpdateMode GridUpdateMode => gridUpdateMode;
     public int MovePercent => movementSimulation != null
         ? movementSimulation.MovePercent
@@ -35,7 +45,10 @@ public sealed class SpatialTestManager : MonoBehaviour
     public IReadOnlyList<GameObject> SpawnedUnits => unitSpawner.Units;
     public IReadOnlyDictionary<Vector2Int, List<GameObject>> UnitGridDic =>
         uniformGridIndex.Cells;
-    public QuadtreeNode QuadtreeNode => quadTreeIndex.QuadtreeNode;
+    public QuadtreeNode QuadTreeRoot => quadTreeIndex != null
+        ? quadTreeIndex.QuadtreeNode
+        : null;
+    public QuadtreeNode QuadtreeNode => QuadTreeRoot;
     public int LastMovedCount { get; private set; }
     public int LastCellChangedCount { get; private set; }
     public int LastGridUpdatedCount { get; private set; }
@@ -48,14 +61,25 @@ public sealed class SpatialTestManager : MonoBehaviour
     public double AverageCellChangedCount { get; private set; }
     public double AverageGridUpdatedCount { get; private set; }
     public bool IsBatchBenchmarkRunning { get; private set; }
+    public int LastCheckCount { get; private set; }
+    public int LastFoundCount => searchList.Count;
+    public double LastSearchMilliseconds { get; private set; }
+    public double MinSearchMilliseconds { get; private set; }
+    public double MaxSearchMilliseconds { get; private set; }
+    public int LastSearchSampleCount { get; private set; }
+    public int SearchCount { get; private set; }
+    public bool HasSearchResult => LastSearchSampleCount > 0;
 
     private GridUpdateMode measuredMode;
     private int measuredMovePercent = -1;
     private readonly StringBuilder csvBuilder = new();
+    private readonly List<Transform> searchList = new();
+    private ISpatialSearcher spatialSearcher;
 
     private void Awake()
     {
         ResolveComponents();
+        UpdateSearcher();
         unitSpawner.RebuildFromChildren();
     }
 
@@ -69,6 +93,12 @@ public sealed class SpatialTestManager : MonoBehaviour
     private void Update()
     {
         ResetMetricsIfTestConditionChanged();
+
+        if (Keyboard.current != null &&
+            Keyboard.current.spaceKey.wasPressedThisFrame)
+        {
+            RunSearchBenchmark();
+        }
 
         IReadOnlyList<GameObject> units = unitSpawner.Units;
 
@@ -122,6 +152,7 @@ public sealed class SpatialTestManager : MonoBehaviour
     {
         ResolveComponents();
         uniformGridIndex.Rebuild(unitSpawner.Units);
+        quadTreeIndex?.QuadTreeBuild(unitSpawner.Units);
     }
 
     public void SpawnUnits()
@@ -135,6 +166,7 @@ public sealed class SpatialTestManager : MonoBehaviour
         movementSimulation.Initialize(unitSpawner.Units);
         BuildGrid();
         ResetGridUpdateMetrics();
+        ResetSearchMetrics();
 
         UnityEngine.Debug.Log(
             $"Spawned {unitSpawner.Units.Count:N0} spatial test units in " +
@@ -147,8 +179,10 @@ public sealed class SpatialTestManager : MonoBehaviour
         ResolveComponents();
         unitSpawner.ClearUnits();
         uniformGridIndex.Clear();
+        quadTreeIndex?.Clear();
         movementSimulation.ResetSimulation();
         ResetGridUpdateMetrics();
+        ResetSearchMetrics();
     }
 
     public void ResetGridUpdateMetrics()
@@ -168,6 +202,146 @@ public sealed class SpatialTestManager : MonoBehaviour
         measuredMovePercent = movementSimulation != null
             ? movementSimulation.MovePercent
             : -1;
+    }
+
+    public void RunSearchBenchmark()
+    {
+        ResolveComponents();
+        UpdateSearcher();
+
+        if (searchTarget == null || spatialSearcher == null)
+            return;
+
+        IReadOnlyList<GameObject> units = unitSpawner.Units;
+        IReadOnlyDictionary<Vector2Int, List<GameObject>> grid =
+            uniformGridIndex.Cells;
+        QuadtreeNode quadTreeRoot = QuadTreeRoot;
+        int validWarmupCount = Mathf.Max(0, searchWarmupCount);
+        int validSampleCount = Mathf.Max(1, searchSampleCount);
+
+        for (int i = 0; i < validWarmupCount; i++)
+        {
+            spatialSearcher.Search(
+                searchTarget.transform.position,
+                searchTarget.searchRadius,
+                units,
+                searchList,
+                out _,
+                grid,
+                CellSize,
+                quadTreeRoot);
+        }
+
+        double totalMilliseconds = 0d;
+        double minMilliseconds = double.PositiveInfinity;
+        double maxMilliseconds = 0d;
+        int totalCheckCount = 0;
+
+        for (int i = 0; i < validSampleCount; i++)
+        {
+            long startedAt = Stopwatch.GetTimestamp();
+
+            spatialSearcher.Search(
+                searchTarget.transform.position,
+                searchTarget.searchRadius,
+                units,
+                searchList,
+                out int checkCount,
+                grid,
+                CellSize,
+                quadTreeRoot);
+
+            long finishedAt = Stopwatch.GetTimestamp();
+            double elapsedMilliseconds =
+                (finishedAt - startedAt) * 1000d / Stopwatch.Frequency;
+
+            totalMilliseconds += elapsedMilliseconds;
+            minMilliseconds = System.Math.Min(minMilliseconds, elapsedMilliseconds);
+            maxMilliseconds = System.Math.Max(maxMilliseconds, elapsedMilliseconds);
+            totalCheckCount += checkCount;
+        }
+
+        LastSearchMilliseconds = totalMilliseconds / validSampleCount;
+        MinSearchMilliseconds = minMilliseconds;
+        MaxSearchMilliseconds = maxMilliseconds;
+        LastCheckCount = totalCheckCount / validSampleCount;
+        LastSearchSampleCount = validSampleCount;
+        SearchCount += validSampleCount;
+
+        UnityEngine.Debug.Log(
+            $"[{spatialSearcher.ModeName}] Samples: {LastSearchSampleCount} | " +
+            $"Checked: {LastCheckCount:N0} | Found: {LastFoundCount:N0} | " +
+            $"Avg: {LastSearchMilliseconds:F4} ms | " +
+            $"Min: {MinSearchMilliseconds:F4} ms | " +
+            $"Max: {MaxSearchMilliseconds:F4} ms",
+            this);
+    }
+
+    [ContextMenu("Validate Uniform Grid Search")]
+    public void ValidateUniformGridSearch()
+    {
+        bool isMatch = TryValidateUniformGridSearch(
+            out int bruteForceFound,
+            out int uniformGridFound);
+
+        if (isMatch)
+        {
+            UnityEngine.Debug.Log(
+                $"Grid search validation passed: {bruteForceFound:N0} matches.",
+                this);
+            return;
+        }
+
+        UnityEngine.Debug.LogError(
+            $"Grid search validation failed. Brute Force: " +
+            $"{bruteForceFound:N0}, Uniform Grid: {uniformGridFound:N0}.",
+            this);
+    }
+
+    public bool TryValidateUniformGridSearch(
+        out int bruteForceFound,
+        out int uniformGridFound)
+    {
+        bruteForceFound = 0;
+        uniformGridFound = 0;
+        ResolveComponents();
+
+        if (searchTarget == null)
+            return false;
+
+        var bruteForceResult = new List<Transform>();
+        var uniformGridResult = new List<Transform>();
+        IReadOnlyList<GameObject> units = unitSpawner.Units;
+
+        new BruteForceSearcher().Search(
+            searchTarget.transform.position,
+            searchTarget.searchRadius,
+            units,
+            bruteForceResult,
+            out _,
+            uniformGridIndex.Cells,
+            CellSize,
+            QuadTreeRoot);
+
+        new UniformGridSearcher().Search(
+            searchTarget.transform.position,
+            searchTarget.searchRadius,
+            units,
+            uniformGridResult,
+            out _,
+            uniformGridIndex.Cells,
+            CellSize,
+            QuadTreeRoot);
+
+        bruteForceFound = bruteForceResult.Count;
+        uniformGridFound = uniformGridResult.Count;
+        var uniformGridSet = new HashSet<Transform>(uniformGridResult);
+        bool isMatch = bruteForceFound == uniformGridFound;
+
+        for (int i = 0; i < bruteForceResult.Count && isMatch; i++)
+            isMatch = uniformGridSet.Contains(bruteForceResult[i]);
+
+        return isMatch;
     }
 
     [ContextMenu("Validate Grid Integrity")]
@@ -302,23 +476,18 @@ public sealed class SpatialTestManager : MonoBehaviour
         for (int i = 0; i < benchmarkSampleFrames; i++)
             yield return null;
 
-        MainUnit mainUnit = FindFirstObjectByType<MainUnit>();
-        mainUnit?.RunBenchmark();
+        RunSearchBenchmark();
 
-        double queryMilliseconds = mainUnit != null &&
-            mainUnit.HasSearchResult
-                ? mainUnit.LastSearchMilliseconds
+        double queryMilliseconds = HasSearchResult
+                ? LastSearchMilliseconds
                 : 0d;
-        int querySamples = mainUnit != null
-            ? mainUnit.LastSampleCount
-            : 0;
+        int querySamples = LastSearchSampleCount;
         bool gridIntegrity = TryValidateGridIntegrity(out _);
         int bruteForceFound = 0;
         int uniformGridFound = 0;
-        bool searchIntegrity = mainUnit != null &&
-            mainUnit.TryValidateUniformGridSearch(
-                out bruteForceFound,
-                out uniformGridFound);
+        bool searchIntegrity = TryValidateUniformGridSearch(
+            out bruteForceFound,
+            out uniformGridFound);
 
         csvBuilder.AppendFormat(
             CultureInfo.InvariantCulture,
@@ -412,13 +581,44 @@ public sealed class SpatialTestManager : MonoBehaviour
         if (uniformGridIndex == null)
             uniformGridIndex = GetComponent<UniformGridIndex>();
 
+        if (quadTreeIndex == null)
+            quadTreeIndex = GetComponent<QuadTreeIndex>();
+
         if (movementSimulation == null)
             movementSimulation = GetComponent<SpatialUnitMovementSimulation>();
+
+        if (searchTarget == null)
+            searchTarget = FindFirstObjectByType<MainUnit>();
+    }
+
+    private void UpdateSearcher()
+    {
+        spatialSearcher = searchType switch
+        {
+            SpatialSearchType.BruteForce => new BruteForceSearcher(),
+            SpatialSearchType.UniformGrid => new UniformGridSearcher(),
+            SpatialSearchType.QuadTree => new QuadTreeSearcher(),
+            _ => new BruteForceSearcher()
+        };
+    }
+
+    private void ResetSearchMetrics()
+    {
+        searchList.Clear();
+        LastCheckCount = 0;
+        LastSearchMilliseconds = 0d;
+        MinSearchMilliseconds = 0d;
+        MaxSearchMilliseconds = 0d;
+        LastSearchSampleCount = 0;
+        SearchCount = 0;
     }
 
     private void OnValidate()
     {
         ResolveComponents();
+        UpdateSearcher();
+        searchWarmupCount = Mathf.Max(0, searchWarmupCount);
+        searchSampleCount = Mathf.Max(1, searchSampleCount);
         benchmarkWarmupFrames = Mathf.Max(0, benchmarkWarmupFrames);
         benchmarkSampleFrames = Mathf.Max(1, benchmarkSampleFrames);
         benchmarkDeltaTime = Mathf.Max(0.0001f, benchmarkDeltaTime);
