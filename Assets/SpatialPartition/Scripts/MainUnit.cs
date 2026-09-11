@@ -210,7 +210,10 @@ public class MainUnit : MonoBehaviour
             searchRadius,
             units,
             bruteForceResult,
-            out _);
+            out _,
+            spatialTestManager.UnitGridDic,
+            spatialTestManager.CellSize,
+            spatialTestManager.QuadtreeNode);
 
         new UniformGridSearcher().Search(
             transform.position,
@@ -219,7 +222,8 @@ public class MainUnit : MonoBehaviour
             uniformGridResult,
             out _,
             spatialTestManager.UnitGridDic,
-            spatialTestManager.CellSize);
+            spatialTestManager.CellSize,
+            spatialTestManager.QuadtreeNode);
 
         bruteForceFound = bruteForceResult.Count;
         uniformGridFound = uniformGridResult.Count;

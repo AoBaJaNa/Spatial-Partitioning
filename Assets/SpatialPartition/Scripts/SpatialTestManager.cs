@@ -14,6 +14,7 @@ public sealed class SpatialTestManager : MonoBehaviour
     [Header("Components")]
     [SerializeField] private SpatialUnitSpawner unitSpawner;
     [SerializeField] private UniformGridIndex uniformGridIndex;
+    [SerializeField] private QuadTreeIndex quadTreeIndex;
     [SerializeField] private SpatialUnitMovementSimulation movementSimulation;
 
     [Header("Grid Update Test")]
@@ -34,7 +35,7 @@ public sealed class SpatialTestManager : MonoBehaviour
     public IReadOnlyList<GameObject> SpawnedUnits => unitSpawner.Units;
     public IReadOnlyDictionary<Vector2Int, List<GameObject>> UnitGridDic =>
         uniformGridIndex.Cells;
-
+    public QuadtreeNode QuadtreeNode => quadTreeIndex.QuadtreeNode;
     public int LastMovedCount { get; private set; }
     public int LastCellChangedCount { get; private set; }
     public int LastGridUpdatedCount { get; private set; }
