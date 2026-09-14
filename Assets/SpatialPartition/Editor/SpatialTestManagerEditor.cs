@@ -24,6 +24,9 @@ public sealed class SpatialTestManagerEditor : Editor
         if (GUILayout.Button("Validate Grid Integrity", GUILayout.Height(26f)))
             manager.ValidateGridIntegrity();
 
+        if (GUILayout.Button("Validate Quadtree Integrity", GUILayout.Height(26f)))
+            manager.ValidateQuadtreeIntegrity();
+
         using (new EditorGUI.DisabledScope(!Application.isPlaying))
         {
             if (GUILayout.Button("Run Search Benchmark", GUILayout.Height(26f)))
@@ -31,6 +34,9 @@ public sealed class SpatialTestManagerEditor : Editor
 
             if (GUILayout.Button("Validate Uniform Grid Search", GUILayout.Height(26f)))
                 manager.ValidateUniformGridSearch();
+
+            if (GUILayout.Button("Validate Quadtree Search", GUILayout.Height(26f)))
+                manager.ValidateQuadtreeSearch();
         }
 
         GUILayout.Space(8f);

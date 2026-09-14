@@ -219,6 +219,11 @@ public sealed class PerformanceUI : MonoBehaviour
         );
 
         textBuilder.AppendLine(
+            $"<color=#AAB4C3>Distribution</color>  " +
+            $"<b>{testManager.SpawnDistributionLabel}</b>"
+        );
+
+        textBuilder.AppendLine(
             $"<color=#AAB4C3>Radius</color>        " +
             $"<b>{mainUnit.searchRadius:F1} m</b>"
         );
@@ -277,7 +282,7 @@ public sealed class PerformanceUI : MonoBehaviour
             return;
 
         textBuilder.AppendLine(
-            "<size=18><color=#8291A8><b>GRID UPDATE</b></color></size>"
+            "<size=18><color=#8291A8><b>INDEX UPDATE</b></color></size>"
         );
 
         textBuilder.AppendLine(
@@ -291,14 +296,19 @@ public sealed class PerformanceUI : MonoBehaviour
             $"<color=#667080>({testManager.MovePercent}%)</color>"
         );
 
+        string changedLabel = testManager.SearchType == SpatialSearchType.QuadTree
+            ? "Node Changed"
+            : "Cell Changed";
+
         textBuilder.AppendLine(
-            $"<color=#AAB4C3>Cell Changed</color>  " +
+            $"<color=#AAB4C3>{changedLabel}</color>  " +
             $"<b>{testManager.LastCellChangedCount:N0}</b>"
         );
 
-        string updateCountLabel =
-            testManager.GridUpdateMode == GridUpdateMode.FullRebuild
+        string updateCountLabel = testManager.GridUpdateMode == GridUpdateMode.FullRebuild
                 ? "Re-registered"
+                : testManager.SearchType == SpatialSearchType.QuadTree
+                    ? "Node Reinserted"
                 : "Grid Updated";
 
         textBuilder.AppendLine(
@@ -320,6 +330,16 @@ public sealed class PerformanceUI : MonoBehaviour
             $"{testManager.MinGridUpdateMilliseconds:F4} / " +
             $"{testManager.MaxGridUpdateMilliseconds:F4} ms"
         );
+
+        if (testManager.SearchType == SpatialSearchType.QuadTree)
+        {
+            textBuilder.AppendLine(
+                $"<color=#AAB4C3>Rebuild / Split / Merge</color> " +
+                $"<b>{testManager.LastTreeFullRebuildCount:N0} / " +
+                $"{testManager.LastTreeSplitCount:N0} / " +
+                $"{testManager.LastTreeMergeCount:N0}</b>"
+            );
+        }
 
         if (testManager.HasSearchResult)
         {

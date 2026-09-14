@@ -19,6 +19,15 @@ public sealed class SpatialTestManager : MonoBehaviour
     [SerializeField] private QuadTreeIndex quadTreeIndex;
     [SerializeField] private SpatialUnitMovementSimulation movementSimulation;
 
+    [Header("Unit Spawn")]
+    [SerializeField] private UnitSpawnDistribution spawnDistribution =
+        UnitSpawnDistribution.Uniform;
+    [SerializeField, Range(0f, 100f)] private float clusteredUnitPercent = 30f;
+    [SerializeField, Min(1)] private int clusterRegionCount = 1;
+    [SerializeField, Min(0.01f)] private float clusterAreaRadius = 55f;
+    [SerializeField, Min(0.01f)] private float clusterRadius = 24f;
+    [SerializeField] private int clusterSeed = 12345;
+
     [Header("Search Query")]
     [SerializeField] private MainUnit searchTarget;
     [SerializeField] private SpatialSearchType searchType =
@@ -36,6 +45,11 @@ public sealed class SpatialTestManager : MonoBehaviour
     [SerializeField] private float[] benchmarkCellSizes = { 10f, 5f, 2.5f };
 
     public int SpawnCount => unitSpawner != null ? unitSpawner.SpawnCount : 0;
+    public UnitSpawnDistribution SpawnDistribution => spawnDistribution;
+    public string SpawnDistributionLabel =>
+        spawnDistribution == UnitSpawnDistribution.Clustered
+            ? $"Uniform + Cluster ({clusteredUnitPercent:F0}%)"
+            : spawnDistribution.ToString();
     public float CellSize => uniformGridIndex != null ? uniformGridIndex.CellSize : 0f;
     public SpatialSearchType SearchType => searchType;
     public GridUpdateMode GridUpdateMode => gridUpdateMode;
@@ -52,6 +66,18 @@ public sealed class SpatialTestManager : MonoBehaviour
     public int LastMovedCount { get; private set; }
     public int LastCellChangedCount { get; private set; }
     public int LastGridUpdatedCount { get; private set; }
+    public int LastTreeFullRebuildCount => quadTreeIndex != null
+        ? quadTreeIndex.LastFullRebuildCount
+        : 0;
+    public int LastTreeSplitCount => quadTreeIndex != null
+        ? quadTreeIndex.LastSplitCount
+        : 0;
+    public int LastTreeMergeCount => quadTreeIndex != null
+        ? quadTreeIndex.LastMergeCount
+        : 0;
+    public int TotalTreeRebuildCount { get; private set; }
+    public int TotalTreeSplitCount { get; private set; }
+    public int TotalTreeMergeCount { get; private set; }
     public double LastGridUpdateMilliseconds { get; private set; }
     public double AverageGridUpdateMilliseconds { get; private set; }
     public double MinGridUpdateMilliseconds { get; private set; }
@@ -113,21 +139,34 @@ public sealed class SpatialTestManager : MonoBehaviour
             : Time.deltaTime;
         movementSimulation.MoveUnits(units, simulationDeltaTime);
 
-        int gridUpdatedCount;
-        int cellChangedCount;
+        int gridUpdatedCount = 0;
+        int cellChangedCount = 0;
         long startedAt = Stopwatch.GetTimestamp();
 
         if (gridUpdateMode == GridUpdateMode.FullRebuild)
         {
-            uniformGridIndex.Rebuild(units);
+            if (searchType == SpatialSearchType.QuadTree)
+                quadTreeIndex.RebuildForUpdate(units);
+            else
+                uniformGridIndex.Rebuild(units);
+
             gridUpdatedCount = units.Count;
-            cellChangedCount = 0;
+            cellChangedCount = searchType == SpatialSearchType.QuadTree
+                ? units.Count
+                : 0;
         }
-        else
+        else if(gridUpdateMode == GridUpdateMode.Dynamic && searchType == SpatialSearchType.UniformGrid)
         {
             cellChangedCount = uniformGridIndex.UpdateMovedUnits(
                 units,
                 movementSimulation.MovingUnitIndices);
+            gridUpdatedCount = cellChangedCount;
+        }else if (gridUpdateMode == GridUpdateMode.Dynamic && searchType == SpatialSearchType.QuadTree) 
+        {
+            quadTreeIndex.NodeUpdate(
+                units,
+                movementSimulation.MovingUnitIndices,
+                out cellChangedCount);
             gridUpdatedCount = cellChangedCount;
         }
 
@@ -136,6 +175,14 @@ public sealed class SpatialTestManager : MonoBehaviour
             (finishedAt - startedAt) * 1000d / Stopwatch.Frequency;
         LastMovedCount = movementSimulation.LastMovedCount;
         LastCellChangedCount = cellChangedCount;
+
+        if (searchType == SpatialSearchType.QuadTree)
+        {
+            TotalTreeRebuildCount += LastTreeFullRebuildCount;
+            TotalTreeSplitCount += LastTreeSplitCount;
+            TotalTreeMergeCount += LastTreeMergeCount;
+        }
+
         RecordGridUpdate(
             LastGridUpdateMilliseconds,
             gridUpdatedCount,
@@ -159,6 +206,13 @@ public sealed class SpatialTestManager : MonoBehaviour
     {
         ResolveComponents();
         float startedAt = Time.realtimeSinceStartup;
+        unitSpawner.SetDistribution(spawnDistribution);
+        unitSpawner.ConfigureClusteredDistribution(
+            clusteredUnitPercent,
+            clusterRegionCount,
+            clusterAreaRadius,
+            clusterRadius,
+            clusterSeed);
 
         if (!unitSpawner.SpawnUnits())
             return;
@@ -198,6 +252,9 @@ public sealed class SpatialTestManager : MonoBehaviour
         AverageMovedCount = 0d;
         AverageCellChangedCount = 0d;
         AverageGridUpdatedCount = 0d;
+        TotalTreeRebuildCount = 0;
+        TotalTreeSplitCount = 0;
+        TotalTreeMergeCount = 0;
         measuredMode = gridUpdateMode;
         measuredMovePercent = movementSimulation != null
             ? movementSimulation.MovePercent
@@ -368,6 +425,95 @@ public sealed class SpatialTestManager : MonoBehaviour
             out validationMessage);
     }
 
+    [ContextMenu("Validate Quadtree Integrity")]
+    public void ValidateQuadtreeIntegrity()
+    {
+        if (TryValidateQuadtreeIntegrity(out string validationMessage))
+        {
+            UnityEngine.Debug.Log(
+                $"Quadtree validation passed: {validationMessage}",
+                this);
+            return;
+        }
+
+        UnityEngine.Debug.LogError(
+            $"Quadtree validation failed: {validationMessage}",
+            this);
+    }
+
+    public bool TryValidateQuadtreeIntegrity(out string validationMessage)
+    {
+        ResolveComponents();
+        return quadTreeIndex.Validate(unitSpawner.Units, out validationMessage);
+    }
+
+    [ContextMenu("Validate Quadtree Search")]
+    public void ValidateQuadtreeSearch()
+    {
+        bool isMatch = TryValidateQuadtreeSearch(
+            out int bruteForceFound,
+            out int quadtreeFound);
+
+        if (isMatch)
+        {
+            UnityEngine.Debug.Log(
+                $"Quadtree search validation passed: {bruteForceFound:N0} matches.",
+                this);
+            return;
+        }
+
+        UnityEngine.Debug.LogError(
+            $"Quadtree search validation failed. Brute Force: " +
+            $"{bruteForceFound:N0}, Quadtree: {quadtreeFound:N0}.",
+            this);
+    }
+
+    public bool TryValidateQuadtreeSearch(
+        out int bruteForceFound,
+        out int quadtreeFound)
+    {
+        bruteForceFound = 0;
+        quadtreeFound = 0;
+        ResolveComponents();
+
+        if (searchTarget == null || QuadTreeRoot == null)
+            return false;
+
+        var bruteForceResult = new List<Transform>();
+        var quadtreeResult = new List<Transform>();
+        IReadOnlyList<GameObject> units = unitSpawner.Units;
+
+        new BruteForceSearcher().Search(
+            searchTarget.transform.position,
+            searchTarget.searchRadius,
+            units,
+            bruteForceResult,
+            out _,
+            uniformGridIndex.Cells,
+            CellSize,
+            QuadTreeRoot);
+
+        new QuadTreeSearcher().Search(
+            searchTarget.transform.position,
+            searchTarget.searchRadius,
+            units,
+            quadtreeResult,
+            out _,
+            uniformGridIndex.Cells,
+            CellSize,
+            QuadTreeRoot);
+
+        bruteForceFound = bruteForceResult.Count;
+        quadtreeFound = quadtreeResult.Count;
+        var quadtreeSet = new HashSet<Transform>(quadtreeResult);
+        bool isMatch = bruteForceFound == quadtreeFound;
+
+        for (int i = 0; i < bruteForceResult.Count && isMatch; i++)
+            isMatch = quadtreeSet.Contains(bruteForceResult[i]);
+
+        return isMatch;
+    }
+
     public void RunBatchBenchmark()
     {
         if (!Application.isPlaying)
@@ -397,10 +543,12 @@ public sealed class SpatialTestManager : MonoBehaviour
 
         csvBuilder.Clear();
         csvBuilder.AppendLine(
-            "Experiment,Mode,CellSize,MovePercent,Moving,CellChanged," +
+            "Experiment,SpawnDistribution,ClusterPercent,ClusterRegions,ClusterAreaRadius," +
+            "ClusterRadius,ClusterSeed,Mode,CellSize,MovePercent,Moving,CellChanged," +
             "GridUpdates,GridAvgMs,GridMinMs,GridMaxMs,QueryAvgMs," +
-            "SpatialCostMs,GridIntegrity,BruteForceFound,UniformGridFound," +
-            "SearchIntegrity,Units,GridSamples,QuerySamples");
+            "SpatialCostMs,IndexIntegrity,BruteForceFound,IndexedFound," +
+            "SearchIntegrity,Units,GridSamples,QuerySamples,SearchType," +
+            "TreeRebuildEvents,TreeSplits,TreeMerges");
 
         yield return RunBenchmarkCase(
             "MovePercentSweep",
@@ -482,19 +630,38 @@ public sealed class SpatialTestManager : MonoBehaviour
                 ? LastSearchMilliseconds
                 : 0d;
         int querySamples = LastSearchSampleCount;
-        bool gridIntegrity = TryValidateGridIntegrity(out _);
+        bool indexIntegrity;
         int bruteForceFound = 0;
-        int uniformGridFound = 0;
-        bool searchIntegrity = TryValidateUniformGridSearch(
-            out bruteForceFound,
-            out uniformGridFound);
+        int indexedFound = 0;
+        bool searchIntegrity;
+
+        if (searchType == SpatialSearchType.QuadTree)
+        {
+            indexIntegrity = TryValidateQuadtreeIntegrity(out _);
+            searchIntegrity = TryValidateQuadtreeSearch(
+                out bruteForceFound,
+                out indexedFound);
+        }
+        else
+        {
+            indexIntegrity = TryValidateGridIntegrity(out _);
+            searchIntegrity = TryValidateUniformGridSearch(
+                out bruteForceFound,
+                out indexedFound);
+        }
 
         csvBuilder.AppendFormat(
             CultureInfo.InvariantCulture,
-            "{0},{1},{2:F3},{3},{4:F3},{5:F3},{6:F3},{7:F6}," +
-            "{8:F6},{9:F6},{10:F6},{11:F6},{12},{13},{14}," +
-            "{15},{16},{17},{18}\n",
+            "{0},{1},{2:F1},{3},{4:F3},{5:F3},{6},{7},{8:F3},{9},{10:F3}," +
+            "{11:F3},{12:F3},{13:F6},{14:F6},{15:F6},{16:F6},{17:F6}," +
+            "{18},{19},{20},{21},{22},{23},{24},{25},{26},{27},{28}\n",
             experiment,
+            spawnDistribution,
+            clusteredUnitPercent,
+            clusterRegionCount,
+            clusterAreaRadius,
+            clusterRadius,
+            clusterSeed,
             mode,
             cellSize,
             movePercent,
@@ -506,13 +673,17 @@ public sealed class SpatialTestManager : MonoBehaviour
             MaxGridUpdateMilliseconds,
             queryMilliseconds,
             AverageGridUpdateMilliseconds + queryMilliseconds,
-            gridIntegrity ? "PASS" : "FAIL",
+            indexIntegrity ? "PASS" : "FAIL",
             bruteForceFound,
-            uniformGridFound,
+            indexedFound,
             searchIntegrity ? "PASS" : "FAIL",
             unitSpawner.Units.Count,
             GridUpdateSampleCount,
-            querySamples);
+            querySamples,
+            searchType,
+            TotalTreeRebuildCount,
+            TotalTreeSplitCount,
+            TotalTreeMergeCount);
     }
 
     private void ConfigureTestCase(
@@ -617,6 +788,10 @@ public sealed class SpatialTestManager : MonoBehaviour
     {
         ResolveComponents();
         UpdateSearcher();
+        clusteredUnitPercent = Mathf.Clamp(clusteredUnitPercent, 0f, 100f);
+        clusterRegionCount = Mathf.Max(1, clusterRegionCount);
+        clusterAreaRadius = Mathf.Max(0.01f, clusterAreaRadius);
+        clusterRadius = Mathf.Max(0.01f, clusterRadius);
         searchWarmupCount = Mathf.Max(0, searchWarmupCount);
         searchSampleCount = Mathf.Max(1, searchSampleCount);
         benchmarkWarmupFrames = Mathf.Max(0, benchmarkWarmupFrames);

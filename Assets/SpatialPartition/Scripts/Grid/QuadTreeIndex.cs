@@ -1,10 +1,10 @@
 using UnityEngine;
 using System.Collections.Generic;
-using UnityEngine.Rendering.Universal;
 public class QuadtreeNode
 {
-    private const int MaxObjectCount = 8;
-    private const int MaxDepth = 5;
+    private const int MaxObjectCount = 10;
+    private const int MergeCountThreshold = 3;
+    private const int MaxDepth = 10;
 
     public Rect Bounds { get; private set; }
     public int Depth { get; private set; }
@@ -12,34 +12,43 @@ public class QuadtreeNode
     public List<GameObject> Objects { get; private set; } = new();
     public QuadtreeNode[] Children { get; private set; }
 
-    public QuadtreeNode(Rect bounds, int depth)
+    public QuadtreeNode(Rect bounds, int depth, QuadtreeNode parent = null)
     {
         this.Bounds = bounds;
         this.Depth = depth;
+        this.ParentNode = parent;
     }
     public bool IsLeaf => Children == null;
+    public QuadtreeNode ParentNode { get; private set; }
 
-    public void Insert(GameObject unit)
+    public void Insert(
+        GameObject unit,
+        Dictionary<GameObject, QuadtreeNode> unitNodeMap,
+        ref int splitCount)
     {
         if (!IsLeaf)
         {
             int index = GetChildIndex(unit.transform.position);
-            Children[index].Insert(unit);
+            Children[index].Insert(unit, unitNodeMap, ref splitCount);
             return;
         }
 
+        unitNodeMap[unit] = this;
         Objects.Add(unit);
 
         if (Objects.Count > MaxObjectCount && Depth < MaxDepth)
         {
             Subdivide();
+            splitCount++;
 
             for (int i = Objects.Count - 1; i >= 0; i--)
             {
                 int index = GetChildIndex(Objects[i].transform.position);
-                Children[index].Insert(Objects[i]);
+                Children[index].Insert(Objects[i], unitNodeMap, ref splitCount);
                 Objects.RemoveAt(i);
             }
+
+            return;
         }
     }
     public int GetChildIndex(Vector3 pos)
@@ -56,6 +65,7 @@ public class QuadtreeNode
         return 3;
 
     }
+
     public void Subdivide()
     {
         float midX = Bounds.x + (Bounds.width / 2f);
@@ -65,10 +75,49 @@ public class QuadtreeNode
         float YSize = Bounds.height / 2f;
 
         Children = new QuadtreeNode[4];
-        Children[0] = new QuadtreeNode(new Rect(Bounds.x, Bounds.y + YSize, XSize, YSize), Depth + 1);
-        Children[1] = new QuadtreeNode(new Rect(midX, midY, XSize, YSize), Depth + 1);
-        Children[2] = new QuadtreeNode(new Rect(Bounds.x, Bounds.y, XSize, YSize), Depth + 1);
-        Children[3] = new QuadtreeNode(new Rect(midX, Bounds.y, XSize, YSize), Depth + 1);
+        Children[0] = new QuadtreeNode(new Rect(Bounds.x, Bounds.y + YSize, XSize, YSize), Depth + 1,this);
+        Children[1] = new QuadtreeNode(new Rect(midX, midY, XSize, YSize), Depth + 1,this);
+        Children[2] = new QuadtreeNode(new Rect(Bounds.x, Bounds.y, XSize, YSize), Depth + 1,this);
+        Children[3] = new QuadtreeNode(new Rect(midX, Bounds.y, XSize, YSize), Depth + 1,this);
+    }
+    public bool TryMerge(Dictionary<GameObject, QuadtreeNode> unitNodeMap)
+    {
+        if(IsLeaf)
+        {
+            return false;
+        }
+
+        int totalCount = 0;
+
+        for( int i = 0; i < 4; i++ )
+        {
+            if (Children[i].IsLeaf)
+                totalCount += Children[i].Objects.Count;
+            else
+            {
+                return false;
+            }
+        }
+
+        if(totalCount > MergeCountThreshold)
+            return false;
+
+        List<GameObject> mergeUnits = new();
+
+        foreach(var unit in Children)
+        {
+            mergeUnits.AddRange(unit.Objects);
+        }
+
+        Children = null;
+
+        foreach (var unit in mergeUnits)
+        {
+            Objects.Add(unit);
+            unitNodeMap[unit] = this;
+        }
+
+        return true;
     }
 
     public void Query(Vector3 center, float radius, List<Transform> result, ref int checkCount)
@@ -112,21 +161,35 @@ public class QuadtreeNode
 
         return deltaSqrDist <= radius * radius;
     }
+
+    
 }
 public class QuadTreeIndex : MonoBehaviour
 {
     public QuadtreeNode QuadtreeNode { get; private set;}
+    public readonly Dictionary<GameObject, QuadtreeNode> QuadTreeTable = new();
+    private IReadOnlyList<GameObject> unitCache;
+    private int lastSplitCount;
+
+    public int LastNodeReinsertedCount { get; private set; }
+    public int LastFullRebuildCount { get; private set; }
+    public int LastSplitCount => lastSplitCount;
+    public int LastMergeCount { get; private set; }
 
     public void Clear()
     {
         QuadtreeNode = null;
+        QuadTreeTable.Clear();
+        ResetUpdateStats();
     }
 
    public void QuadTreeBuild(IReadOnlyList<GameObject> allUnits)
     {
+        Clear();
+        unitCache = allUnits;
+
         if (allUnits == null || allUnits.Count == 0)
         {
-            Clear();
             return;
         }
 
@@ -151,7 +214,204 @@ public class QuadTreeIndex : MonoBehaviour
 
         for (int i = 0; i < allUnits.Count; i++)
         {
-            QuadtreeNode.Insert(allUnits[i]);
+            QuadtreeNode.Insert(allUnits[i], QuadTreeTable, ref lastSplitCount);
         }
+    }
+
+    public void NodeUpdate(
+        IReadOnlyList<GameObject> unitList,
+        IReadOnlyList<int> movedUnitIndices,
+        out int count)
+    {
+        count = 0;
+        ResetUpdateStats();
+
+        if (QuadtreeNode == null || movedUnitIndices == null)
+            return;
+
+        for (int i = 0; i < movedUnitIndices.Count; i++)
+        {
+            int unitIndex = movedUnitIndices[i];
+
+            if (unitIndex < 0 || unitIndex >= unitList.Count)
+                continue;
+
+            GameObject unit = unitList[unitIndex];
+
+            if (!QuadTreeTable.TryGetValue(unit, out QuadtreeNode oldNode))
+                continue;
+
+            Vector2 unitPos = new Vector2(unit.transform.position.x, unit.transform.position.z);
+
+            if (oldNode.Bounds.Contains(unitPos))
+            {
+                continue;
+            }
+
+            if(!QuadtreeNode.Bounds.Contains(unitPos))
+            {
+                RebuildForUpdate(unitCache);
+                count = LastNodeReinsertedCount;
+                return;
+            }
+
+            oldNode.Objects.Remove(unit);
+            QuadTreeTable.Remove(unit);
+
+            QuadtreeNode searchNode = oldNode.ParentNode;
+
+            while (searchNode != null)
+            {
+                if (searchNode.Bounds.Contains(unitPos))
+                {
+                    searchNode.Insert(unit, QuadTreeTable, ref lastSplitCount);
+                    TryMergeUpward(oldNode.ParentNode);
+                    count++;
+                    LastNodeReinsertedCount++;
+                    break;
+                }
+                searchNode = searchNode.ParentNode;
+            }
+        }
+    }
+    public void TryMergeUpward(QuadtreeNode node)
+    {
+        while (node != null)
+        {
+            if (!node.TryMerge(QuadTreeTable))
+                break;
+
+            LastMergeCount++;
+            node = node.ParentNode;
+        }
+    }
+
+    public void RebuildForUpdate(IReadOnlyList<GameObject> units)
+    {
+        QuadTreeBuild(units);
+        LastFullRebuildCount = 1;
+        LastNodeReinsertedCount = units != null ? units.Count : 0;
+    }
+
+    public bool Validate(
+        IReadOnlyList<GameObject> units,
+        out string validationMessage)
+    {
+        if (units == null || units.Count == 0)
+        {
+            validationMessage = QuadtreeNode == null && QuadTreeTable.Count == 0
+                ? "Tree is empty."
+                : "Tree contains data while the unit list is empty.";
+            return QuadtreeNode == null && QuadTreeTable.Count == 0;
+        }
+
+        if (QuadtreeNode == null)
+        {
+            validationMessage = "Tree root is missing.";
+            return false;
+        }
+
+        var indexedUnits = new HashSet<GameObject>();
+
+        if (!ValidateNode(QuadtreeNode, indexedUnits, out validationMessage))
+            return false;
+
+        int expectedCount = 0;
+
+        for (int i = 0; i < units.Count; i++)
+        {
+            GameObject unit = units[i];
+
+            if (unit == null)
+                continue;
+
+            expectedCount++;
+
+            if (!indexedUnits.Contains(unit))
+            {
+                validationMessage = $"{unit.name} is missing from the tree.";
+                return false;
+            }
+        }
+
+        if (indexedUnits.Count != expectedCount ||
+            QuadTreeTable.Count != expectedCount)
+        {
+            validationMessage =
+                $"Tree count mismatch. Nodes: {indexedUnits.Count}, " +
+                $"Map: {QuadTreeTable.Count}, Expected: {expectedCount}.";
+            return false;
+        }
+
+        validationMessage = $"{expectedCount:N0} units are registered exactly once.";
+        return true;
+    }
+
+    private bool ValidateNode(
+        QuadtreeNode node,
+        HashSet<GameObject> indexedUnits,
+        out string validationMessage)
+    {
+        if (!node.IsLeaf)
+        {
+            if (node.Objects.Count != 0)
+            {
+                validationMessage = "A divided node still contains units.";
+                return false;
+            }
+
+            for (int i = 0; i < node.Children.Length; i++)
+            {
+                if (node.Children[i].ParentNode != node)
+                {
+                    validationMessage = "A child has an invalid parent reference.";
+                    return false;
+                }
+
+                if (!ValidateNode(node.Children[i], indexedUnits, out validationMessage))
+                    return false;
+            }
+
+            validationMessage = string.Empty;
+            return true;
+        }
+
+        for (int i = 0; i < node.Objects.Count; i++)
+        {
+            GameObject unit = node.Objects[i];
+
+            if (unit == null ||
+                !node.Bounds.Contains(new Vector2(
+                    unit.transform.position.x,
+                    unit.transform.position.z)))
+            {
+                validationMessage = "A leaf contains an invalid unit position.";
+                return false;
+            }
+
+            if (!indexedUnits.Add(unit))
+            {
+                validationMessage = $"{unit.name} is registered more than once.";
+                return false;
+            }
+
+            if (!QuadTreeTable.TryGetValue(unit, out QuadtreeNode mappedNode) ||
+                mappedNode != node)
+            {
+                validationMessage = $"{unit.name} has an invalid node map entry.";
+                return false;
+            }
+        }
+
+        validationMessage = string.Empty;
+        return true;
+    }
+
+    private void ResetUpdateStats()
+    {
+        LastNodeReinsertedCount = 0;
+        LastFullRebuildCount = 0;
+        lastSplitCount = 0;
+        LastMergeCount = 0;
     }
 }

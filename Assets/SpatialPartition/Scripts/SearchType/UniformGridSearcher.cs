@@ -6,8 +6,7 @@ public class UniformGridSearcher : ISpatialSearcher
 {
     public string ModeName => "Uniform Grid";
 
-    private static readonly ProfilerMarker SearchProfilerMarker =
-        new("Uniform Grid");
+    private static readonly ProfilerMarker SearchProfilerMarker = new("Uniform Grid");
     
     public void Search(
         Vector3 center,
