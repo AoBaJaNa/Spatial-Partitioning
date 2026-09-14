@@ -44,6 +44,13 @@ public sealed class SpatialTestManagerEditor : Editor
                                           manager.IsBatchBenchmarkRunning))
         {
             if (GUILayout.Button(
+                    "Run 3 Modes × 10 / 50 / 100% (CSV)",
+                    GUILayout.Height(30f)))
+            {
+                manager.RunDynamicMovePercentBenchmark();
+            }
+
+            if (GUILayout.Button(
                     "Run Grid Update Benchmark (CSV)",
                     GUILayout.Height(30f)))
             {

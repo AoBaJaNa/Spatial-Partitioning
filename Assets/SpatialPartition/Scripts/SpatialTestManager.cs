@@ -98,6 +98,13 @@ public sealed class SpatialTestManager : MonoBehaviour
 
     private GridUpdateMode measuredMode;
     private int measuredMovePercent = -1;
+    private static readonly SpatialSearchType[] DynamicBenchmarkSearchTypes =
+    {
+        SpatialSearchType.BruteForce,
+        SpatialSearchType.UniformGrid,
+        SpatialSearchType.QuadTree
+    };
+    private static readonly int[] DynamicBenchmarkMovePercents = { 10, 50, 100 };
     private readonly StringBuilder csvBuilder = new();
     private readonly List<Transform> searchList = new();
     private ISpatialSearcher spatialSearcher;
@@ -530,10 +537,43 @@ public sealed class SpatialTestManager : MonoBehaviour
         StartCoroutine(RunBatchBenchmarkRoutine());
     }
 
-    private IEnumerator RunBatchBenchmarkRoutine()
+    public void RunDynamicMovePercentBenchmark()
+    {
+        if (!Application.isPlaying)
+        {
+            UnityEngine.Debug.LogWarning(
+                "Enter Play Mode before running the dynamic move benchmark.",
+                this);
+            return;
+        }
+
+        if (IsBatchBenchmarkRunning)
+            return;
+
+        if (unitSpawner.Units.Count == 0)
+        {
+            UnityEngine.Debug.LogWarning(
+                "Spawn units before running the dynamic move benchmark.",
+                this);
+            return;
+        }
+
+        if (searchTarget == null)
+        {
+            UnityEngine.Debug.LogWarning(
+                "Assign a MainUnit search target before running the dynamic move benchmark.",
+                this);
+            return;
+        }
+
+        StartCoroutine(RunDynamicMovePercentBenchmarkRoutine());
+    }
+
+    private IEnumerator RunDynamicMovePercentBenchmarkRoutine()
     {
         IsBatchBenchmarkRunning = true;
         GridUpdateMode previousMode = gridUpdateMode;
+        SpatialSearchType previousSearchType = searchType;
         int previousMovePercent = movementSimulation.MovePercent;
         float previousCellSize = uniformGridIndex.CellSize;
         IReadOnlyList<GameObject> units = unitSpawner.Units;
@@ -542,31 +582,79 @@ public sealed class SpatialTestManager : MonoBehaviour
         BuildGrid();
 
         csvBuilder.Clear();
-        csvBuilder.AppendLine(
-            "Experiment,SpawnDistribution,ClusterPercent,ClusterRegions,ClusterAreaRadius," +
-            "ClusterRadius,ClusterSeed,Mode,CellSize,MovePercent,Moving,CellChanged," +
-            "GridUpdates,GridAvgMs,GridMinMs,GridMaxMs,QueryAvgMs," +
-            "SpatialCostMs,IndexIntegrity,BruteForceFound,IndexedFound," +
-            "SearchIntegrity,Units,GridSamples,QuerySamples,SearchType," +
-            "TreeRebuildEvents,TreeSplits,TreeMerges");
+        AppendBenchmarkCsvHeader();
+
+        for (int typeIndex = 0;
+             typeIndex < DynamicBenchmarkSearchTypes.Length;
+             typeIndex++)
+        {
+            SpatialSearchType testSearchType =
+                DynamicBenchmarkSearchTypes[typeIndex];
+
+            for (int moveIndex = 0;
+                 moveIndex < DynamicBenchmarkMovePercents.Length;
+                 moveIndex++)
+            {
+                yield return RunBenchmarkCase(
+                    "CurrentSceneThreeModeMoveSweep",
+                    testSearchType,
+                    GridUpdateMode.Dynamic,
+                    DynamicBenchmarkMovePercents[moveIndex],
+                    previousCellSize);
+            }
+        }
+
+        RestoreBenchmarkState(
+            previousMode,
+            previousSearchType,
+            previousMovePercent,
+            previousCellSize,
+            units);
+
+        string filePath = WriteBenchmarkCsv("SpatialDynamicMoveSweep");
+        IsBatchBenchmarkRunning = false;
+
+        UnityEngine.Debug.Log(
+            $"Dynamic move benchmark complete. CSV exported to: {filePath}",
+            this);
+    }
+
+    private IEnumerator RunBatchBenchmarkRoutine()
+    {
+        IsBatchBenchmarkRunning = true;
+        GridUpdateMode previousMode = gridUpdateMode;
+        SpatialSearchType previousSearchType = searchType;
+        int previousMovePercent = movementSimulation.MovePercent;
+        float previousCellSize = uniformGridIndex.CellSize;
+        IReadOnlyList<GameObject> units = unitSpawner.Units;
+
+        movementSimulation.Initialize(units);
+        BuildGrid();
+
+        csvBuilder.Clear();
+        AppendBenchmarkCsvHeader();
 
         yield return RunBenchmarkCase(
             "MovePercentSweep",
+            previousSearchType,
             GridUpdateMode.Dynamic,
             10,
             previousCellSize);
         yield return RunBenchmarkCase(
             "MovePercentSweep",
+            previousSearchType,
             GridUpdateMode.Dynamic,
             50,
             previousCellSize);
         yield return RunBenchmarkCase(
             "MovePercentSweep",
+            previousSearchType,
             GridUpdateMode.Dynamic,
             100,
             previousCellSize);
         yield return RunBenchmarkCase(
             "MovePercentSweep",
+            previousSearchType,
             GridUpdateMode.FullRebuild,
             100,
             previousCellSize);
@@ -577,26 +665,26 @@ public sealed class SpatialTestManager : MonoBehaviour
 
             yield return RunBenchmarkCase(
                 "CellSizeSweep",
+                previousSearchType,
                 GridUpdateMode.Dynamic,
                 100,
                 cellSize);
             yield return RunBenchmarkCase(
                 "CellSizeSweep",
+                previousSearchType,
                 GridUpdateMode.FullRebuild,
                 100,
                 cellSize);
         }
 
-        ConfigureTestCase(previousMode, previousMovePercent);
-        uniformGridIndex.SetCellSize(previousCellSize);
-        movementSimulation.RestoreInitialPositions(units);
-        movementSimulation.Initialize(units);
-        BuildGrid();
+        RestoreBenchmarkState(
+            previousMode,
+            previousSearchType,
+            previousMovePercent,
+            previousCellSize,
+            units);
 
-        string filePath = Path.Combine(
-            Application.persistentDataPath,
-            $"SpatialGridBenchmark_{System.DateTime.Now:yyyyMMdd_HHmmss}.csv");
-        File.WriteAllText(filePath, csvBuilder.ToString(), Encoding.UTF8);
+        string filePath = WriteBenchmarkCsv("SpatialGridBenchmark");
         IsBatchBenchmarkRunning = false;
 
         UnityEngine.Debug.Log(
@@ -604,12 +692,51 @@ public sealed class SpatialTestManager : MonoBehaviour
             this);
     }
 
+    private void AppendBenchmarkCsvHeader()
+    {
+        csvBuilder.AppendLine(
+            "Experiment,SpawnDistribution,ClusterPercent,ClusterRegions,ClusterAreaRadius," +
+            "ClusterRadius,ClusterSeed,Mode,CellSize,MovePercent,Moving,CellChanged," +
+            "GridUpdates,GridAvgMs,GridMinMs,GridMaxMs,QueryAvgMs," +
+            "SpatialCostMs,IndexIntegrity,BruteForceFound,IndexedFound," +
+            "SearchIntegrity,Units,GridSamples,QuerySamples,SearchType," +
+            "TreeRebuildEvents,TreeSplits,TreeMerges");
+    }
+
+    private void RestoreBenchmarkState(
+        GridUpdateMode previousMode,
+        SpatialSearchType previousSearchType,
+        int previousMovePercent,
+        float previousCellSize,
+        IReadOnlyList<GameObject> units)
+    {
+        searchType = previousSearchType;
+        UpdateSearcher();
+        ConfigureTestCase(previousMode, previousMovePercent);
+        uniformGridIndex.SetCellSize(previousCellSize);
+        movementSimulation.RestoreInitialPositions(units);
+        movementSimulation.Initialize(units);
+        BuildGrid();
+    }
+
+    private string WriteBenchmarkCsv(string fileNamePrefix)
+    {
+        string filePath = Path.Combine(
+            Application.persistentDataPath,
+            $"{fileNamePrefix}_{System.DateTime.Now:yyyyMMdd_HHmmss}.csv");
+        File.WriteAllText(filePath, csvBuilder.ToString(), Encoding.UTF8);
+        return filePath;
+    }
+
     private IEnumerator RunBenchmarkCase(
         string experiment,
+        SpatialSearchType testSearchType,
         GridUpdateMode mode,
         int movePercent,
         float cellSize)
     {
+        searchType = testSearchType;
+        UpdateSearcher();
         ConfigureTestCase(mode, movePercent);
         uniformGridIndex.SetCellSize(cellSize);
         movementSimulation.RestoreInitialPositions(unitSpawner.Units);
@@ -630,24 +757,46 @@ public sealed class SpatialTestManager : MonoBehaviour
                 ? LastSearchMilliseconds
                 : 0d;
         int querySamples = LastSearchSampleCount;
-        bool indexIntegrity;
+        string indexIntegrity;
         int bruteForceFound = 0;
         int indexedFound = 0;
         bool searchIntegrity;
 
         if (searchType == SpatialSearchType.QuadTree)
         {
-            indexIntegrity = TryValidateQuadtreeIntegrity(out _);
+            indexIntegrity = TryValidateQuadtreeIntegrity(out _)
+                ? "PASS"
+                : "FAIL";
             searchIntegrity = TryValidateQuadtreeSearch(
+                out bruteForceFound,
+                out indexedFound);
+        }
+        else if (searchType == SpatialSearchType.UniformGrid)
+        {
+            indexIntegrity = TryValidateGridIntegrity(out _)
+                ? "PASS"
+                : "FAIL";
+            searchIntegrity = TryValidateUniformGridSearch(
                 out bruteForceFound,
                 out indexedFound);
         }
         else
         {
-            indexIntegrity = TryValidateGridIntegrity(out _);
-            searchIntegrity = TryValidateUniformGridSearch(
-                out bruteForceFound,
-                out indexedFound);
+            indexIntegrity = "N/A";
+            GetBruteForceFound(out bruteForceFound);
+            indexedFound = bruteForceFound;
+            searchIntegrity = true;
+        }
+
+        // Each mode must report the same result at this exact simulation state.
+        // The selected searcher's last result is compared with the brute-force baseline.
+        if (LastFoundCount != bruteForceFound)
+        {
+            searchIntegrity = false;
+            UnityEngine.Debug.LogError(
+                $"Benchmark search mismatch ({searchType}, {movePercent}%): " +
+                $"selected={LastFoundCount}, bruteForce={bruteForceFound}.",
+                this);
         }
 
         csvBuilder.AppendFormat(
@@ -673,7 +822,7 @@ public sealed class SpatialTestManager : MonoBehaviour
             MaxGridUpdateMilliseconds,
             queryMilliseconds,
             AverageGridUpdateMilliseconds + queryMilliseconds,
-            indexIntegrity ? "PASS" : "FAIL",
+            indexIntegrity,
             bruteForceFound,
             indexedFound,
             searchIntegrity ? "PASS" : "FAIL",
@@ -684,6 +833,23 @@ public sealed class SpatialTestManager : MonoBehaviour
             TotalTreeRebuildCount,
             TotalTreeSplitCount,
             TotalTreeMergeCount);
+    }
+
+    private void GetBruteForceFound(out int bruteForceFound)
+    {
+        var bruteForceResult = new List<Transform>();
+
+        new BruteForceSearcher().Search(
+            searchTarget.transform.position,
+            searchTarget.searchRadius,
+            unitSpawner.Units,
+            bruteForceResult,
+            out _,
+            uniformGridIndex.Cells,
+            CellSize,
+            QuadTreeRoot);
+
+        bruteForceFound = bruteForceResult.Count;
     }
 
     private void ConfigureTestCase(
