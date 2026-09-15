@@ -44,10 +44,38 @@ public sealed class SpatialTestManagerEditor : Editor
                                           manager.IsBatchBenchmarkRunning))
         {
             if (GUILayout.Button(
-                    "Run 3 Modes × 10 / 50 / 100% (CSV)",
+                    "Run 3 Modes + Full Rebuild (CSV)",
                     GUILayout.Height(30f)))
             {
                 manager.RunDynamicMovePercentBenchmark();
+            }
+
+            if (GUILayout.Button(
+                    "Run Brute Force 10 / 50 / 100% (CSV)",
+                    GUILayout.Height(26f)))
+            {
+                manager.RunBruteForceMovePercentBenchmark();
+            }
+
+            if (GUILayout.Button(
+                    "Run Uniform Grid 10 / 50 / 100% (CSV)",
+                    GUILayout.Height(26f)))
+            {
+                manager.RunUniformGridMovePercentBenchmark();
+            }
+
+            if (GUILayout.Button(
+                    "Run Quadtree 10 / 50 / 100% (CSV)",
+                    GUILayout.Height(26f)))
+            {
+                manager.RunQuadtreeMovePercentBenchmark();
+            }
+
+            if (GUILayout.Button(
+                    "Run Quadtree Sweep (Cluster / 300m CSV)",
+                    GUILayout.Height(30f)))
+            {
+                manager.RunQuadtreeParameterSweepBenchmark();
             }
 
             if (GUILayout.Button(

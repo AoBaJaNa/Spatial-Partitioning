@@ -44,6 +44,12 @@ public sealed class SpatialTestManager : MonoBehaviour
         1f / 60f;
     [SerializeField] private float[] benchmarkCellSizes = { 10f, 5f, 2.5f };
 
+    [Header("Quadtree Parameter Sweep")]
+    [SerializeField, Min(0.01f)] private float quadtreeSweepSearchRadius = 300f;
+    [SerializeField] private int[] quadtreeSweepMaxDepths = { 6, 8, 10 };
+    [SerializeField] private int[] quadtreeSweepLeafCapacities =
+        { 4, 8, 16, 32 };
+
     public int SpawnCount => unitSpawner != null ? unitSpawner.SpawnCount : 0;
     public UnitSpawnDistribution SpawnDistribution => spawnDistribution;
     public string SpawnDistributionLabel =>
@@ -78,6 +84,14 @@ public sealed class SpatialTestManager : MonoBehaviour
     public int TotalTreeRebuildCount { get; private set; }
     public int TotalTreeSplitCount { get; private set; }
     public int TotalTreeMergeCount { get; private set; }
+    public int TreeDynamicFrameCount { get; private set; }
+    public double TreeDynamicFrameAverageMilliseconds { get; private set; }
+    public double TreeDynamicFrameMaxMilliseconds { get; private set; }
+    public int TreeRootRebuildFrameCount { get; private set; }
+    public double TreeRootRebuildFrameAverageMilliseconds { get; private set; }
+    public double TreeRootRebuildFrameMaxMilliseconds { get; private set; }
+    public int TotalTreeDynamicSplitCount { get; private set; }
+    public int TotalTreeRebuildSplitCount { get; private set; }
     public double LastGridUpdateMilliseconds { get; private set; }
     public double AverageGridUpdateMilliseconds { get; private set; }
     public double MinGridUpdateMilliseconds { get; private set; }
@@ -107,6 +121,8 @@ public sealed class SpatialTestManager : MonoBehaviour
     private static readonly int[] DynamicBenchmarkMovePercents = { 10, 50, 100 };
     private readonly StringBuilder csvBuilder = new();
     private readonly List<Transform> searchList = new();
+    private readonly Dictionary<int, double> bruteForceQueryMillisecondsByMovePercent =
+        new();
     private ISpatialSearcher spatialSearcher;
 
     private void Awake()
@@ -188,6 +204,14 @@ public sealed class SpatialTestManager : MonoBehaviour
             TotalTreeRebuildCount += LastTreeFullRebuildCount;
             TotalTreeSplitCount += LastTreeSplitCount;
             TotalTreeMergeCount += LastTreeMergeCount;
+
+            if (gridUpdateMode == GridUpdateMode.Dynamic)
+            {
+                RecordQuadtreeDynamicFrame(
+                    LastGridUpdateMilliseconds,
+                    LastTreeFullRebuildCount > 0,
+                    LastTreeSplitCount);
+            }
         }
 
         RecordGridUpdate(
@@ -262,6 +286,14 @@ public sealed class SpatialTestManager : MonoBehaviour
         TotalTreeRebuildCount = 0;
         TotalTreeSplitCount = 0;
         TotalTreeMergeCount = 0;
+        TreeDynamicFrameCount = 0;
+        TreeDynamicFrameAverageMilliseconds = 0d;
+        TreeDynamicFrameMaxMilliseconds = 0d;
+        TreeRootRebuildFrameCount = 0;
+        TreeRootRebuildFrameAverageMilliseconds = 0d;
+        TreeRootRebuildFrameMaxMilliseconds = 0d;
+        TotalTreeDynamicSplitCount = 0;
+        TotalTreeRebuildSplitCount = 0;
         measuredMode = gridUpdateMode;
         measuredMovePercent = movementSimulation != null
             ? movementSimulation.MovePercent
@@ -539,23 +571,72 @@ public sealed class SpatialTestManager : MonoBehaviour
 
     public void RunDynamicMovePercentBenchmark()
     {
+        if (!CanRunDynamicMoveBenchmark())
+            return;
+
+        StartCoroutine(RunDynamicMovePercentBenchmarkRoutine());
+    }
+
+    public void RunBruteForceMovePercentBenchmark()
+    {
+        RunSingleSearchTypeMovePercentBenchmark(SpatialSearchType.BruteForce);
+    }
+
+    public void RunUniformGridMovePercentBenchmark()
+    {
+        RunSingleSearchTypeMovePercentBenchmark(SpatialSearchType.UniformGrid);
+    }
+
+    public void RunQuadtreeMovePercentBenchmark()
+    {
+        RunSingleSearchTypeMovePercentBenchmark(SpatialSearchType.QuadTree);
+    }
+
+    public void RunQuadtreeParameterSweepBenchmark()
+    {
+        if (!CanRunDynamicMoveBenchmark())
+            return;
+
+        if (spawnDistribution != UnitSpawnDistribution.Clustered)
+        {
+            UnityEngine.Debug.LogWarning(
+                "Run the Quadtree parameter sweep from the Clustered scene.",
+                this);
+            return;
+        }
+
+        StartCoroutine(RunQuadtreeParameterSweepBenchmarkRoutine());
+    }
+
+    private void RunSingleSearchTypeMovePercentBenchmark(
+        SpatialSearchType testSearchType)
+    {
+        if (!CanRunDynamicMoveBenchmark())
+            return;
+
+        StartCoroutine(RunSingleSearchTypeMovePercentBenchmarkRoutine(
+            testSearchType));
+    }
+
+    private bool CanRunDynamicMoveBenchmark()
+    {
         if (!Application.isPlaying)
         {
             UnityEngine.Debug.LogWarning(
                 "Enter Play Mode before running the dynamic move benchmark.",
                 this);
-            return;
+            return false;
         }
 
         if (IsBatchBenchmarkRunning)
-            return;
+            return false;
 
         if (unitSpawner.Units.Count == 0)
         {
             UnityEngine.Debug.LogWarning(
                 "Spawn units before running the dynamic move benchmark.",
                 this);
-            return;
+            return false;
         }
 
         if (searchTarget == null)
@@ -563,10 +644,126 @@ public sealed class SpatialTestManager : MonoBehaviour
             UnityEngine.Debug.LogWarning(
                 "Assign a MainUnit search target before running the dynamic move benchmark.",
                 this);
-            return;
+            return false;
         }
 
-        StartCoroutine(RunDynamicMovePercentBenchmarkRoutine());
+        return true;
+    }
+
+    private IEnumerator RunSingleSearchTypeMovePercentBenchmarkRoutine(
+        SpatialSearchType testSearchType)
+    {
+        IsBatchBenchmarkRunning = true;
+        GridUpdateMode previousMode = gridUpdateMode;
+        SpatialSearchType previousSearchType = searchType;
+        int previousMovePercent = movementSimulation.MovePercent;
+        float previousCellSize = uniformGridIndex.CellSize;
+        IReadOnlyList<GameObject> units = unitSpawner.Units;
+
+        movementSimulation.Initialize(units);
+        BuildGrid();
+
+        bruteForceQueryMillisecondsByMovePercent.Clear();
+        csvBuilder.Clear();
+        AppendBenchmarkCsvHeader();
+
+        for (int moveIndex = 0;
+             moveIndex < DynamicBenchmarkMovePercents.Length;
+             moveIndex++)
+        {
+            yield return RunBenchmarkCase(
+                "CurrentSceneSingleModeMoveSweep",
+                testSearchType,
+                GridUpdateMode.Dynamic,
+                DynamicBenchmarkMovePercents[moveIndex],
+                previousCellSize);
+        }
+
+        RestoreBenchmarkState(
+            previousMode,
+            previousSearchType,
+            previousMovePercent,
+            previousCellSize,
+            units);
+
+        string filePath = WriteBenchmarkCsv(
+            $"Spatial{testSearchType}MoveSweep");
+        IsBatchBenchmarkRunning = false;
+
+        UnityEngine.Debug.Log(
+            $"{testSearchType} move benchmark complete. CSV exported to: {filePath}",
+            this);
+    }
+
+    private IEnumerator RunQuadtreeParameterSweepBenchmarkRoutine()
+    {
+        IsBatchBenchmarkRunning = true;
+        GridUpdateMode previousMode = gridUpdateMode;
+        SpatialSearchType previousSearchType = searchType;
+        int previousMovePercent = movementSimulation.MovePercent;
+        float previousCellSize = uniformGridIndex.CellSize;
+        float previousSearchRadius = searchTarget.searchRadius;
+        int previousMaxDepth = quadTreeIndex.MaxDepth;
+        int previousLeafCapacity = quadTreeIndex.MaxObjectsPerLeaf;
+        IReadOnlyList<GameObject> units = unitSpawner.Units;
+
+        searchTarget.searchRadius = quadtreeSweepSearchRadius;
+        movementSimulation.Initialize(units);
+        BuildGrid();
+
+        bruteForceQueryMillisecondsByMovePercent.Clear();
+        csvBuilder.Clear();
+        AppendBenchmarkCsvHeader();
+
+        for (int depthIndex = 0;
+             depthIndex < quadtreeSweepMaxDepths.Length;
+             depthIndex++)
+        {
+            int maxDepth = quadtreeSweepMaxDepths[depthIndex];
+
+            for (int capacityIndex = 0;
+                 capacityIndex < quadtreeSweepLeafCapacities.Length;
+                 capacityIndex++)
+            {
+                int leafCapacity = quadtreeSweepLeafCapacities[capacityIndex];
+                quadTreeIndex.SetSubdivisionParameters(maxDepth, leafCapacity);
+
+                for (int moveIndex = 0;
+                     moveIndex < DynamicBenchmarkMovePercents.Length;
+                     moveIndex++)
+                {
+                    int movePercent = DynamicBenchmarkMovePercents[moveIndex];
+
+                    if (movePercent != 10 && movePercent != 100)
+                        continue;
+
+                    yield return RunBenchmarkCase(
+                        "QuadtreeClusteredParameterSweep",
+                        SpatialSearchType.QuadTree,
+                        GridUpdateMode.Dynamic,
+                        movePercent,
+                        previousCellSize);
+                }
+            }
+        }
+
+        searchTarget.searchRadius = previousSearchRadius;
+        quadTreeIndex.SetSubdivisionParameters(
+            previousMaxDepth,
+            previousLeafCapacity);
+        RestoreBenchmarkState(
+            previousMode,
+            previousSearchType,
+            previousMovePercent,
+            previousCellSize,
+            units);
+
+        string filePath = WriteBenchmarkCsv("QuadtreeParameterSweep");
+        IsBatchBenchmarkRunning = false;
+
+        UnityEngine.Debug.Log(
+            $"Quadtree parameter sweep complete. CSV exported to: {filePath}",
+            this);
     }
 
     private IEnumerator RunDynamicMovePercentBenchmarkRoutine()
@@ -581,6 +778,7 @@ public sealed class SpatialTestManager : MonoBehaviour
         movementSimulation.Initialize(units);
         BuildGrid();
 
+        bruteForceQueryMillisecondsByMovePercent.Clear();
         csvBuilder.Clear();
         AppendBenchmarkCsvHeader();
 
@@ -603,6 +801,19 @@ public sealed class SpatialTestManager : MonoBehaviour
                     previousCellSize);
             }
         }
+
+        yield return RunBenchmarkCase(
+            "DynamicVsFullRebuild",
+            SpatialSearchType.UniformGrid,
+            GridUpdateMode.FullRebuild,
+            100,
+            previousCellSize);
+        yield return RunBenchmarkCase(
+            "DynamicVsFullRebuild",
+            SpatialSearchType.QuadTree,
+            GridUpdateMode.FullRebuild,
+            100,
+            previousCellSize);
 
         RestoreBenchmarkState(
             previousMode,
@@ -631,6 +842,7 @@ public sealed class SpatialTestManager : MonoBehaviour
         movementSimulation.Initialize(units);
         BuildGrid();
 
+        bruteForceQueryMillisecondsByMovePercent.Clear();
         csvBuilder.Clear();
         AppendBenchmarkCsvHeader();
 
@@ -698,9 +910,15 @@ public sealed class SpatialTestManager : MonoBehaviour
             "Experiment,SpawnDistribution,ClusterPercent,ClusterRegions,ClusterAreaRadius," +
             "ClusterRadius,ClusterSeed,Mode,CellSize,MovePercent,Moving,CellChanged," +
             "GridUpdates,GridAvgMs,GridMinMs,GridMaxMs,QueryAvgMs," +
-            "SpatialCostMs,IndexIntegrity,BruteForceFound,IndexedFound," +
+            "EstimatedCostQ1Ms,EstimatedCostQ5Ms,EstimatedCostQ10Ms," +
+            "EstimatedCostQ50Ms,EstimatedCostQ100Ms,BruteQueryBaselineMs," +
+            "BreakEvenQueries,IndexIntegrity,BruteForceFound,IndexedFound," +
             "SearchIntegrity,Units,GridSamples,QuerySamples,SearchType," +
-            "TreeRebuildEvents,TreeSplits,TreeMerges");
+            "QuadTreeMaxDepth,QuadTreeLeafCapacity,TreeRebuildEvents," +
+            "TreeSplits,TreeMerges,TreeDynamicFrames," +
+            "TreeDynamicAvgMs,TreeDynamicMaxMs,TreeRootRebuildFrames," +
+            "TreeRootRebuildAvgMs,TreeRootRebuildMaxMs,TreeDynamicSplits," +
+            "TreeRebuildSplits");
     }
 
     private void RestoreBenchmarkState(
@@ -757,6 +975,26 @@ public sealed class SpatialTestManager : MonoBehaviour
                 ? LastSearchMilliseconds
                 : 0d;
         int querySamples = LastSearchSampleCount;
+
+        if (searchType == SpatialSearchType.BruteForce)
+        {
+            bruteForceQueryMillisecondsByMovePercent[movePercent] =
+                queryMilliseconds;
+        }
+
+        bruteForceQueryMillisecondsByMovePercent.TryGetValue(
+            movePercent,
+            out double bruteForceQueryMilliseconds);
+        bool hasBruteForceQueryBaseline =
+            bruteForceQueryMillisecondsByMovePercent.ContainsKey(movePercent);
+        double estimatedCostQ1 = EstimateSpatialCost(queryMilliseconds, 1);
+        double estimatedCostQ5 = EstimateSpatialCost(queryMilliseconds, 5);
+        double estimatedCostQ10 = EstimateSpatialCost(queryMilliseconds, 10);
+        double estimatedCostQ50 = EstimateSpatialCost(queryMilliseconds, 50);
+        double estimatedCostQ100 = EstimateSpatialCost(queryMilliseconds, 100);
+        string breakEvenQueries = GetBreakEvenQueries(
+            bruteForceQueryMilliseconds,
+            hasBruteForceQueryBaseline);
         string indexIntegrity;
         int bruteForceFound = 0;
         int indexedFound = 0;
@@ -803,7 +1041,9 @@ public sealed class SpatialTestManager : MonoBehaviour
             CultureInfo.InvariantCulture,
             "{0},{1},{2:F1},{3},{4:F3},{5:F3},{6},{7},{8:F3},{9},{10:F3}," +
             "{11:F3},{12:F3},{13:F6},{14:F6},{15:F6},{16:F6},{17:F6}," +
-            "{18},{19},{20},{21},{22},{23},{24},{25},{26},{27},{28}\n",
+            "{18:F6},{19:F6},{20:F6},{21:F6},{22:F6},{23:F6},{24}," +
+            "{25},{26},{27},{28},{29},{30},{31},{32},{33},{34},{35},{36},{37}," +
+            "{38:F6},{39:F6},{40},{41:F6},{42:F6},{43},{44}\n",
             experiment,
             spawnDistribution,
             clusteredUnitPercent,
@@ -821,7 +1061,13 @@ public sealed class SpatialTestManager : MonoBehaviour
             MinGridUpdateMilliseconds,
             MaxGridUpdateMilliseconds,
             queryMilliseconds,
-            AverageGridUpdateMilliseconds + queryMilliseconds,
+            estimatedCostQ1,
+            estimatedCostQ5,
+            estimatedCostQ10,
+            estimatedCostQ50,
+            estimatedCostQ100,
+            hasBruteForceQueryBaseline ? bruteForceQueryMilliseconds : -1d,
+            breakEvenQueries,
             indexIntegrity,
             bruteForceFound,
             indexedFound,
@@ -830,9 +1076,46 @@ public sealed class SpatialTestManager : MonoBehaviour
             GridUpdateSampleCount,
             querySamples,
             searchType,
+            quadTreeIndex != null ? quadTreeIndex.MaxDepth : 0,
+            quadTreeIndex != null ? quadTreeIndex.MaxObjectsPerLeaf : 0,
             TotalTreeRebuildCount,
             TotalTreeSplitCount,
-            TotalTreeMergeCount);
+            TotalTreeMergeCount,
+            TreeDynamicFrameCount,
+            TreeDynamicFrameAverageMilliseconds,
+            TreeDynamicFrameMaxMilliseconds,
+            TreeRootRebuildFrameCount,
+            TreeRootRebuildFrameAverageMilliseconds,
+            TreeRootRebuildFrameMaxMilliseconds,
+            TotalTreeDynamicSplitCount,
+            TotalTreeRebuildSplitCount);
+    }
+
+    private double EstimateSpatialCost(
+        double queryMilliseconds,
+        int queryCount)
+    {
+        return AverageGridUpdateMilliseconds + queryMilliseconds * queryCount;
+    }
+
+    private string GetBreakEvenQueries(
+        double bruteForceQueryMilliseconds,
+        bool hasBruteForceQueryBaseline)
+    {
+        if (searchType == SpatialSearchType.BruteForce ||
+            !hasBruteForceQueryBaseline)
+        {
+            return "N/A";
+        }
+
+        double querySavings = bruteForceQueryMilliseconds - LastSearchMilliseconds;
+
+        if (querySavings <= 0d)
+            return "N/A";
+
+        double breakEvenQueries =
+            AverageGridUpdateMilliseconds / querySavings;
+        return breakEvenQueries.ToString("F3", CultureInfo.InvariantCulture);
     }
 
     private void GetBruteForceFound(out int bruteForceFound)
@@ -910,6 +1193,34 @@ public sealed class SpatialTestManager : MonoBehaviour
             elapsedMilliseconds);
     }
 
+    private void RecordQuadtreeDynamicFrame(
+        double elapsedMilliseconds,
+        bool rebuiltRoot,
+        int splitCount)
+    {
+        if (rebuiltRoot)
+        {
+            TreeRootRebuildFrameCount++;
+            TreeRootRebuildFrameAverageMilliseconds +=
+                (elapsedMilliseconds - TreeRootRebuildFrameAverageMilliseconds) /
+                TreeRootRebuildFrameCount;
+            TreeRootRebuildFrameMaxMilliseconds = System.Math.Max(
+                TreeRootRebuildFrameMaxMilliseconds,
+                elapsedMilliseconds);
+            TotalTreeRebuildSplitCount += splitCount;
+            return;
+        }
+
+        TreeDynamicFrameCount++;
+        TreeDynamicFrameAverageMilliseconds +=
+            (elapsedMilliseconds - TreeDynamicFrameAverageMilliseconds) /
+            TreeDynamicFrameCount;
+        TreeDynamicFrameMaxMilliseconds = System.Math.Max(
+            TreeDynamicFrameMaxMilliseconds,
+            elapsedMilliseconds);
+        TotalTreeDynamicSplitCount += splitCount;
+    }
+
     private void ResolveComponents()
     {
         if (unitSpawner == null)
@@ -969,5 +1280,29 @@ public sealed class SpatialTestManager : MonoBehaviour
 
         for (int i = 0; i < benchmarkCellSizes.Length; i++)
             benchmarkCellSizes[i] = Mathf.Max(0.01f, benchmarkCellSizes[i]);
+
+        quadtreeSweepSearchRadius = Mathf.Max(0.01f, quadtreeSweepSearchRadius);
+
+        if (quadtreeSweepMaxDepths == null ||
+            quadtreeSweepMaxDepths.Length == 0)
+        {
+            quadtreeSweepMaxDepths = new[] { 6, 8, 10 };
+        }
+
+        if (quadtreeSweepLeafCapacities == null ||
+            quadtreeSweepLeafCapacities.Length == 0)
+        {
+            quadtreeSweepLeafCapacities = new[] { 4, 8, 16, 32 };
+        }
+
+        for (int i = 0; i < quadtreeSweepMaxDepths.Length; i++)
+            quadtreeSweepMaxDepths[i] = Mathf.Max(0, quadtreeSweepMaxDepths[i]);
+
+        for (int i = 0; i < quadtreeSweepLeafCapacities.Length; i++)
+        {
+            quadtreeSweepLeafCapacities[i] = Mathf.Max(
+                1,
+                quadtreeSweepLeafCapacities[i]);
+        }
     }
 }

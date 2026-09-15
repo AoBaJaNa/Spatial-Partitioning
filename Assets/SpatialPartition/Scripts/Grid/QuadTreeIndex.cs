@@ -2,9 +2,9 @@ using UnityEngine;
 using System.Collections.Generic;
 public class QuadtreeNode
 {
-    private const int MaxObjectCount = 10;
     private const int MergeCountThreshold = 3;
-    private const int MaxDepth = 10;
+    private readonly int maxObjectCount;
+    private readonly int maxDepth;
 
     public Rect Bounds { get; private set; }
     public int Depth { get; private set; }
@@ -12,10 +12,17 @@ public class QuadtreeNode
     public List<GameObject> Objects { get; private set; } = new();
     public QuadtreeNode[] Children { get; private set; }
 
-    public QuadtreeNode(Rect bounds, int depth, QuadtreeNode parent = null)
+    public QuadtreeNode(
+        Rect bounds,
+        int depth,
+        int maxObjectCount,
+        int maxDepth,
+        QuadtreeNode parent = null)
     {
         this.Bounds = bounds;
         this.Depth = depth;
+        this.maxObjectCount = maxObjectCount;
+        this.maxDepth = maxDepth;
         this.ParentNode = parent;
     }
     public bool IsLeaf => Children == null;
@@ -36,7 +43,7 @@ public class QuadtreeNode
         unitNodeMap[unit] = this;
         Objects.Add(unit);
 
-        if (Objects.Count > MaxObjectCount && Depth < MaxDepth)
+        if (Objects.Count > maxObjectCount && Depth < maxDepth)
         {
             Subdivide();
             splitCount++;
@@ -75,10 +82,10 @@ public class QuadtreeNode
         float YSize = Bounds.height / 2f;
 
         Children = new QuadtreeNode[4];
-        Children[0] = new QuadtreeNode(new Rect(Bounds.x, Bounds.y + YSize, XSize, YSize), Depth + 1,this);
-        Children[1] = new QuadtreeNode(new Rect(midX, midY, XSize, YSize), Depth + 1,this);
-        Children[2] = new QuadtreeNode(new Rect(Bounds.x, Bounds.y, XSize, YSize), Depth + 1,this);
-        Children[3] = new QuadtreeNode(new Rect(midX, Bounds.y, XSize, YSize), Depth + 1,this);
+        Children[0] = new QuadtreeNode(new Rect(Bounds.x, Bounds.y + YSize, XSize, YSize), Depth + 1, maxObjectCount, maxDepth, this);
+        Children[1] = new QuadtreeNode(new Rect(midX, midY, XSize, YSize), Depth + 1, maxObjectCount, maxDepth, this);
+        Children[2] = new QuadtreeNode(new Rect(Bounds.x, Bounds.y, XSize, YSize), Depth + 1, maxObjectCount, maxDepth, this);
+        Children[3] = new QuadtreeNode(new Rect(midX, Bounds.y, XSize, YSize), Depth + 1, maxObjectCount, maxDepth, this);
     }
     public bool TryMerge(Dictionary<GameObject, QuadtreeNode> unitNodeMap)
     {
@@ -166,15 +173,41 @@ public class QuadtreeNode
 }
 public class QuadTreeIndex : MonoBehaviour
 {
+    [Header("Subdivision Settings")]
+    [SerializeField, Min(1)] private int maxObjectsPerLeaf = 10;
+    [SerializeField, Min(0)] private int maxDepth = 10;
+
+    [Header("Scene View Gizmos")]
+    [SerializeField] private bool drawQuadtreeGizmos = true;
+    [SerializeField] private bool onlyDrawWhenQuadtreeModeIsActive = true;
+    [SerializeField] private bool drawLeafNodes = true;
+    [SerializeField, Min(1)] private int maxDrawnNodes = 5000;
+    [SerializeField, Min(0.01f)] private float gizmoHeight = 0.1f;
+    [SerializeField] private Color branchNodeColor =
+        new(1f, 0.72f, 0.2f, 0.85f);
+    [SerializeField] private Color leafNodeColor =
+        new(0.35f, 1f, 0.4f, 0.65f);
+
     public QuadtreeNode QuadtreeNode { get; private set;}
     public readonly Dictionary<GameObject, QuadtreeNode> QuadTreeTable = new();
     private IReadOnlyList<GameObject> unitCache;
     private int lastSplitCount;
+    private SpatialTestManager spatialTestManager;
 
     public int LastNodeReinsertedCount { get; private set; }
     public int LastFullRebuildCount { get; private set; }
     public int LastSplitCount => lastSplitCount;
     public int LastMergeCount { get; private set; }
+    public int MaxObjectsPerLeaf => maxObjectsPerLeaf;
+    public int MaxDepth => maxDepth;
+
+    public void SetSubdivisionParameters(
+        int newMaxDepth,
+        int newMaxObjectsPerLeaf)
+    {
+        maxDepth = Mathf.Max(0, newMaxDepth);
+        maxObjectsPerLeaf = Mathf.Max(1, newMaxObjectsPerLeaf);
+    }
 
     public void Clear()
     {
@@ -207,10 +240,14 @@ public class QuadTreeIndex : MonoBehaviour
             if (unitT.position.z < minY) minY = unitT.position.z;
         }
 
-        float XSize = maxX - minX + 20;
-        float YSize = maxY - minY + 20;
+        float XSize = maxX - minX + 200;
+        float YSize = maxY - minY + 200;
 
-        QuadtreeNode = new QuadtreeNode(new Rect(minX - 10, minY - 10, XSize, YSize), 0);
+        QuadtreeNode = new QuadtreeNode(
+            new Rect(minX - 100, minY - 100, XSize, YSize),
+            0,
+            maxObjectsPerLeaf,
+            maxDepth);
 
         for (int i = 0; i < allUnits.Count; i++)
         {
@@ -413,5 +450,68 @@ public class QuadTreeIndex : MonoBehaviour
         LastFullRebuildCount = 0;
         lastSplitCount = 0;
         LastMergeCount = 0;
+    }
+
+    private void OnValidate()
+    {
+        maxObjectsPerLeaf = Mathf.Max(1, maxObjectsPerLeaf);
+        maxDepth = Mathf.Max(0, maxDepth);
+        maxDrawnNodes = Mathf.Max(1, maxDrawnNodes);
+        gizmoHeight = Mathf.Max(0.01f, gizmoHeight);
+    }
+
+    private void OnDrawGizmos()
+    {
+        if (!drawQuadtreeGizmos ||
+            !IsActiveQuadtreeMode() ||
+            QuadtreeNode == null)
+        return;
+
+        int drawnNodeCount = 0;
+        DrawNodeGizmos(QuadtreeNode, ref drawnNodeCount);
+    }
+
+    private void DrawNodeGizmos(QuadtreeNode node, ref int drawnNodeCount)
+    {
+        if (node == null || drawnNodeCount >= maxDrawnNodes)
+            return;
+
+        if (!node.IsLeaf || drawLeafNodes)
+        {
+            Rect bounds = node.Bounds;
+            Vector3 center = new(
+                bounds.center.x,
+                gizmoHeight * 0.5f,
+                bounds.center.y);
+            Vector3 size = new(bounds.width, gizmoHeight, bounds.height);
+
+            Gizmos.color = node.IsLeaf ? leafNodeColor : branchNodeColor;
+            Gizmos.DrawWireCube(center, size);
+            drawnNodeCount++;
+        }
+
+        if (node.IsLeaf)
+            return;
+
+        QuadtreeNode[] children = node.Children;
+
+        for (int i = 0;
+             i < children.Length && drawnNodeCount < maxDrawnNodes;
+             i++)
+        {
+            DrawNodeGizmos(children[i], ref drawnNodeCount);
+        }
+    }
+
+    private bool IsActiveQuadtreeMode()
+    {
+        if (!onlyDrawWhenQuadtreeModeIsActive)
+            return true;
+
+        if (spatialTestManager == null)
+            spatialTestManager = GetComponent<SpatialTestManager>();
+
+        return spatialTestManager == null ||
+               spatialTestManager.SearchType == SpatialSearchType.QuadTree;
     }
 }

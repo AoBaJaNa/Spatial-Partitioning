@@ -5,7 +5,16 @@ public sealed class UniformGridIndex : MonoBehaviour
 {
     [SerializeField, Min(0.01f)] private float cellSize = 10f;
 
+    [Header("Scene View Gizmos")]
+    [SerializeField] private bool drawGridGizmos = true;
+    [SerializeField] private bool onlyDrawWhenGridModeIsActive = true;
+    [SerializeField, Min(1)] private int maxDrawnCells = 2000;
+    [SerializeField, Min(0.01f)] private float gizmoHeight = 0.05f;
+    [SerializeField] private Color occupiedCellColor =
+        new(0.2f, 0.75f, 1f, 0.8f);
+
     private readonly Dictionary<Vector2Int, List<GameObject>> cells = new();
+    private SpatialTestManager spatialTestManager;
 
     public float CellSize => cellSize;
     public IReadOnlyDictionary<Vector2Int, List<GameObject>> Cells => cells;
@@ -198,5 +207,47 @@ public sealed class UniformGridIndex : MonoBehaviour
     private void OnValidate()
     {
         cellSize = Mathf.Max(0.01f, cellSize);
+        maxDrawnCells = Mathf.Max(1, maxDrawnCells);
+        gizmoHeight = Mathf.Max(0.01f, gizmoHeight);
+    }
+
+    private void OnDrawGizmos()
+    {
+        if (!drawGridGizmos ||
+            !IsActiveGridMode() ||
+            cells.Count == 0)
+        return;
+
+        int drawnCellCount = 0;
+        float halfCellSize = cellSize * 0.5f;
+        Vector3 cellSizeVector = new(cellSize, gizmoHeight, cellSize);
+
+        foreach (KeyValuePair<Vector2Int, List<GameObject>> entry in cells)
+        {
+            if (drawnCellCount >= maxDrawnCells)
+                return;
+
+            Vector2Int cell = entry.Key;
+            Vector3 center = new(
+                cell.x * cellSize + halfCellSize,
+                gizmoHeight * 0.5f,
+                cell.y * cellSize + halfCellSize);
+
+            Gizmos.color = occupiedCellColor;
+            Gizmos.DrawWireCube(center, cellSizeVector);
+            drawnCellCount++;
+        }
+    }
+
+    private bool IsActiveGridMode()
+    {
+        if (!onlyDrawWhenGridModeIsActive)
+            return true;
+
+        if (spatialTestManager == null)
+            spatialTestManager = GetComponent<SpatialTestManager>();
+
+        return spatialTestManager == null ||
+               spatialTestManager.SearchType == SpatialSearchType.UniformGrid;
     }
 }
